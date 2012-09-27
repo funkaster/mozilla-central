@@ -12,36 +12,36 @@ AC_DEFUN([MOZ_IOS_SDK],
 
 MOZ_ARG_WITH_STRING(ios-version,
 [  --with-ios-version=VER
-                          version of the iOS SDK, defaults to 5.1],
+                      version of the iOS SDK, defaults to 6.0],
     ios_sdk_version=$withval,
-    ios_sdk_version=5.1)
+    ios_sdk_version=6.0)
 
 MOZ_ARG_WITH_STRING(ios-min-version,
 [  --with-ios-min-version=VER
-                          deploy target version, defaults to 5.1],
+                          deploy target version, defaults to 4.3],
     ios_deploy_version=$withval,
     ios_deploy_version=4.3)
 
-dnl test for Xcode 4.3.1
+MOZ_ARG_WITH_STRING(ios-arch,
+[  --with-ios-arch=ARCH
+                   iOS architecture, defaults to armv7 for device, x86 for simulator],
+    ios_arch=$withval)
+
+dnl test for Xcode 4.3+
 if ! test -d "/Applications/Xcode.app/Contents/Developer/Platforms" ; then
-    AC_MSG_ERROR([You must install Xcode first])
-fi
-
-if test -z "$ios_deploy_version" ; then
-    ios_deploy_version="4.3"
-fi
-
-if test -z "$ios_sdk_version" ; then
-    ios_sdk_version="4.3"
+    AC_MSG_ERROR([You must install Xcode first from the App Store])
 fi
 
 if test "$ios_target" == "iPhoneSimulator" ; then
+    dnl force ios_arch to i386 for simulator
     ios_arch=i386
     target_name=x86
     target=i386-darwin
 else
-    ios_arch=armv7
-    target_name=x86
+    if test -z "$ios_arch" ; then
+        ios_arch=armv7
+    fi 
+    target_name=arm
     target=arm-darwin
 fi
 target_os=darwin
