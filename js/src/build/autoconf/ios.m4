@@ -34,6 +34,7 @@ fi
 
 if test "$ios_target" == "iPhoneSimulator" ; then
     dnl force ios_arch to i386 for simulator
+    CPU_ARCH=i386
     ios_arch=i386
     target_name=x86
     target=i386-darwin
@@ -53,7 +54,7 @@ ios_toolchain="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefaul
 dnl test to see if the actual sdk exists
 ios_sdk_root="$xcode_base"/$ios_target.platform/Developer/SDKs/$ios_target"$ios_sdk_version".sdk
 if ! test -d "$ios_sdk_root" ; then
-    AC_MSG_ERROR([Wrong SDK version])
+    AC_MSG_ERROR([Invalid SDK version])
 fi
 
 dnl set the compilers
@@ -65,9 +66,9 @@ LD="$ios_toolchain"/ld
 AR="$ios_toolchain"/ar
 RANLIB="$ios_toolchain"/ranlib
 STRIP="$ios_toolchain"/strip
-LDFLAGS="-L$ios_sdk_root/usr/lib/"
+LDFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -v"
 
-CFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -miphoneos-version-min=$ios_deploy_version -I$ios_sdk_root/usr/include -pipe -Wno-implicit-int"
+CFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -miphoneos-version-min=$ios_deploy_version -I$ios_sdk_root/usr/include -pipe -Wno-implicit-int -Wno-return-type"
 CXXFLAGS="$CFLAGS"
 CPPFLAGS=""
 
