@@ -18,7 +18,7 @@ fi
 mv libjs_static.a libjs_static.armv7.a
 
 # create ios version (armv7s)
-../configure --with-ios-target=iPhoneOS --with-ios-version=$IOS_SDK --with-ios-min-version=$MIN_IOS_VERSION --ios-arch armv7s --disable-shared-js --disable-tests --disable-ion --disable-jm --disable-tm --enable-llvm-hacks
+../configure --with-ios-target=iPhoneOS --with-ios-version=$IOS_SDK --with-ios-min-version=$MIN_IOS_VERSION --with-ios-arch armv7s --disable-shared-js --disable-tests --disable-ion --disable-jm --disable-tm --enable-llvm-hacks
 make -j$cpus
 if (( $? )) ; then
     echo "error when compiling iOS version of the library"
