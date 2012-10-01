@@ -6,6 +6,8 @@
 MIN_IOS_VERSION=4.3
 IOS_SDK=6.0
 
+LIPO="xcrun -sdk iphoneos lipo"
+
 cpus=$(sysctl hw.ncpu | awk '{print $2}')
 
 # create ios version (armv7)
@@ -18,7 +20,7 @@ fi
 mv libjs_static.a libjs_static.armv7.a
 
 # create ios version (armv7s)
-../configure --with-ios-target=iPhoneOS --with-ios-version=$IOS_SDK --with-ios-min-version=$MIN_IOS_VERSION --with-ios-arch armv7s --disable-shared-js --disable-tests --disable-ion --disable-jm --disable-tm --enable-llvm-hacks
+../configure --with-ios-target=iPhoneOS --with-ios-version=$IOS_SDK --with-ios-min-version=$MIN_IOS_VERSION --with-ios-arch=armv7s --disable-shared-js --disable-tests --disable-ion --disable-jm --disable-tm --enable-llvm-hacks
 make -j$cpus
 if (( $? )) ; then
     echo "error when compiling iOS version of the library"
@@ -40,7 +42,8 @@ mv libjs_static.a libjs_static.i386.a
 
 if [ -e libjs_static.i386.a ]  && [ -e libjs_static.armv7.a ] ; then
     echo "creating fat version of the library"
-    lipo -create -output libjs_static.a libjs_static.i386.a libjs_static.armv7.a libjs_static.armv7s.a
+    $LIPO -create -output libjs_static.a libjs_static.i386.a libjs_static.armv7.a libjs_static.armv7s.a
+    $LIPO -info libjs_static.a
 fi
 
 echo "*** DONE ***"
