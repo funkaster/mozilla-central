@@ -7,6 +7,7 @@ MIN_IOS_VERSION=4.3
 IOS_SDK=6.0
 
 LIPO="xcrun -sdk iphoneos lipo"
+STRIP="xcrun -sdk iphoneos strip"
 
 cpus=$(sysctl hw.ncpu | awk '{print $2}')
 
@@ -43,6 +44,8 @@ mv libjs_static.a libjs_static.i386.a
 if [ -e libjs_static.i386.a ]  && [ -e libjs_static.armv7.a ] ; then
     echo "creating fat version of the library"
     $LIPO -create -output libjs_static.a libjs_static.i386.a libjs_static.armv7.a libjs_static.armv7s.a
+    # remove debugging info
+    $STRIP -S libjs_static.a
     $LIPO -info libjs_static.a
 fi
 
