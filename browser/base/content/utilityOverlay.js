@@ -6,6 +6,7 @@
 // Services = object with smart getters for common XPCOM services
 Components.utils.import("resource://gre/modules/Services.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "BROWSER_NEW_TAB_URL", function () {
   const PREF = "browser.newtab.url";
@@ -18,7 +19,7 @@ XPCOMUtils.defineLazyGetter(this, "BROWSER_NEW_TAB_URL", function () {
       // update BROWSER_NEW_TAB_URL when it gets initialized.
       if (!gPrivateBrowsingUI.initialized)
         gPrivateBrowsingUI.addInitializationCallback(update);
-      else if (gPrivateBrowsingUI.privateWindow &&
+      else if (PrivateBrowsingUtils.isWindowPrivate(window) &&
                !gPrivateBrowsingUI.autoStarted)
         return "about:privatebrowsing";
     }
@@ -109,7 +110,8 @@ function openUILink(url, event, aIgnoreButton, aIgnoreAlt, aAllowThirdPartyFixup
     params = {
       allowThirdPartyFixup: aAllowThirdPartyFixup,
       postData: aPostData,
-      referrerURI: aReferrerURI
+      referrerURI: aReferrerURI,
+      initiatingDoc: event.target.ownerDocument
     };
   }
 
@@ -224,9 +226,10 @@ function openLinkIn(url, where, params) {
   var aDisallowInheritPrincipal = params.disallowInheritPrincipal;
   // Currently, this parameter works only for where=="tab" or "current"
   var aIsUTF8               = params.isUTF8;
+  var aInitiatingDoc        = params.initiatingDoc;
 
   if (where == "save") {
-    saveURL(url, null, null, true, null, aReferrerURI);
+    saveURL(url, null, null, true, null, aReferrerURI, aInitiatingDoc);
     return;
   }
   const Cc = Components.classes;

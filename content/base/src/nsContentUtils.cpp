@@ -99,6 +99,7 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsDOMJSUtils.h"
 #include "nsGenericHTMLElement.h"
 #include "nsAttrValue.h"
+#include "nsAttrValueInlines.h"
 #include "nsReferencedElement.h"
 #include "nsIDragService.h"
 #include "nsIChannelEventSink.h"
@@ -128,6 +129,7 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsISVGChildFrame.h"
 #include "nsRenderingContext.h"
 #include "gfxSVGGlyphs.h"
+#include "mozilla/dom/EncodingUtils.h"
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
@@ -248,8 +250,8 @@ namespace {
 /**
  * Default values for the ViewportInfo structure.
  */
-static const float    kViewportMinScale = 0.0;
-static const float    kViewportMaxScale = 10.0;
+static const double   kViewportMinScale = 0.0;
+static const double   kViewportMaxScale = 10.0;
 static const uint32_t kViewportMinWidth = 200;
 static const uint32_t kViewportMaxWidth = 10000;
 static const uint32_t kViewportMinHeight = 223;
@@ -1527,6 +1529,7 @@ nsContentUtils::Shutdown()
 
   NS_IF_RELEASE(sSameOriginChecker);
   
+  EncodingUtils::Shutdown();
   nsTextEditorState::ShutDown();
 }
 
@@ -2692,11 +2695,7 @@ nsContentUtils::GetImgLoaderForDocument(nsIDocument* aDoc)
     }
   } else {
     nsCOMPtr<nsIChannel> channel = aDoc->GetChannel();
-    if (channel) {
-      nsCOMPtr<nsILoadContext> context;
-      NS_QueryNotificationCallbacks(channel, context);
-      isPrivate = context && context->UsePrivateBrowsing();
-    }
+    isPrivate = channel && NS_UsePrivateBrowsing(channel);
   }
   return isPrivate ? sPrivateImgLoader : sImgLoader;
 }
@@ -5103,6 +5102,18 @@ static void ProcessViewportToken(nsIDocument *aDocument,
                          (c == '\t') || (c == '\n') || (c == '\r'))
 
 /* static */
+void
+nsContentUtils::ConstrainViewportValues(ViewportInfo& aViewInfo)
+{
+  // Constrain the min/max zoom as specified at:
+  // dev.w3.org/csswg/css-device-adapt section 6.2
+  aViewInfo.maxZoom = NS_MAX(aViewInfo.minZoom, aViewInfo.maxZoom);
+
+  aViewInfo.defaultZoom = NS_MIN(aViewInfo.defaultZoom, aViewInfo.maxZoom);
+  aViewInfo.defaultZoom = NS_MAX(aViewInfo.defaultZoom, aViewInfo.minZoom);
+}
+
+/* static */
 ViewportInfo
 nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
                                 uint32_t aDisplayWidth,
@@ -5112,6 +5123,10 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
   ret.defaultZoom = 1.0;
   ret.autoSize = true;
   ret.allowZoom = true;
+  ret.width = aDisplayWidth;
+  ret.height = aDisplayHeight;
+  ret.minZoom = kViewportMinScale;
+  ret.maxZoom = kViewportMaxScale;
 
   nsAutoString viewport;
   aDocument->GetHeaderData(nsGkAtoms::viewport, viewport);
@@ -5129,6 +5144,7 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
             (docId.Find("Mobile") != -1) ||
             (docId.Find("WML") != -1))
         {
+          nsContentUtils::ConstrainViewportValues(ret);
           return ret;
         }
       }
@@ -5137,6 +5153,7 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
     nsAutoString handheldFriendly;
     aDocument->GetHeaderData(nsGkAtoms::handheldFriendly, handheldFriendly);
     if (handheldFriendly.EqualsLiteral("true")) {
+      nsContentUtils::ConstrainViewportValues(ret);
       return ret;
     }
   }
@@ -5151,8 +5168,8 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
     scaleMinFloat = kViewportMinScale;
   }
 
-  scaleMinFloat = NS_MIN(scaleMinFloat, kViewportMaxScale);
-  scaleMinFloat = NS_MAX(scaleMinFloat, kViewportMinScale);
+  scaleMinFloat = NS_MIN((double)scaleMinFloat, kViewportMaxScale);
+  scaleMinFloat = NS_MAX((double)scaleMinFloat, kViewportMinScale);
 
   nsAutoString maxScaleStr;
   aDocument->GetHeaderData(nsGkAtoms::viewport_maximum_scale, maxScaleStr);
@@ -5166,16 +5183,14 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
     scaleMaxFloat = kViewportMaxScale;
   }
 
-  scaleMaxFloat = NS_MIN(scaleMaxFloat, kViewportMaxScale);
-  scaleMaxFloat = NS_MAX(scaleMaxFloat, kViewportMinScale);
+  scaleMaxFloat = NS_MIN((double)scaleMaxFloat, kViewportMaxScale);
+  scaleMaxFloat = NS_MAX((double)scaleMaxFloat, kViewportMinScale);
 
   nsAutoString scaleStr;
   aDocument->GetHeaderData(nsGkAtoms::viewport_initial_scale, scaleStr);
 
   nsresult scaleErrorCode;
   float scaleFloat = scaleStr.ToFloat(&scaleErrorCode);
-  scaleFloat = NS_MIN(scaleFloat, scaleMaxFloat);
-  scaleFloat = NS_MAX(scaleFloat, scaleMinFloat);
 
   nsAutoString widthStr, heightStr;
 
@@ -5275,6 +5290,8 @@ nsContentUtils::GetViewportInfo(nsIDocument *aDocument,
   ret.minZoom = scaleMinFloat;
   ret.maxZoom = scaleMaxFloat;
   ret.autoSize = autoSize;
+
+  nsContentUtils::ConstrainViewportValues(ret);
   return ret;
 }
 
@@ -6204,6 +6221,26 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
   return NS_OK;
 }
 
+// Initial implementation: only stores to RAM, not file
+// TODO: bug 704447: large file support
+nsresult
+nsContentUtils::CreateBlobBuffer(JSContext* aCx,
+                                 const nsACString& aData,
+                                 jsval& aBlob)
+{
+  uint32_t blobLen = aData.Length();
+  void* blobData = PR_Malloc(blobLen);
+  nsCOMPtr<nsIDOMBlob> blob;
+  if (blobData) {
+    memcpy(blobData, aData.BeginReading(), blobLen);
+    blob = new nsDOMMemoryFile(blobData, blobLen, EmptyString());
+  } else {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  JSObject* scope = JS_GetGlobalForScopeChain(aCx);
+  return nsContentUtils::WrapNative(aCx, scope, blob, &aBlob, nullptr, true);
+}
+
 void
 nsContentUtils::StripNullChars(const nsAString& aInStr, nsAString& aOutStr)
 {
@@ -6925,9 +6962,7 @@ nsContentUtils::ReleaseWrapper(nsISupports* aScriptObjectHolder,
     // from both here.
     JSObject* obj = aCache->GetWrapperPreserveColor();
     if (aCache->IsDOMBinding() && obj) {
-      JSCompartment *compartment = js::GetObjectCompartment(obj);
-      xpc::CompartmentPrivate *priv =
-        static_cast<xpc::CompartmentPrivate *>(JS_GetCompartmentPrivate(compartment));
+      xpc::CompartmentPrivate *priv = xpc::GetCompartmentPrivate(obj);
       priv->RemoveDOMExpandoObject(obj);
     }
     DropJSObjects(aScriptObjectHolder);

@@ -486,7 +486,7 @@ nsSVGFEGaussianBlurElement::SetStdDeviation(float stdDeviationX, float stdDeviat
  */
 static uint32_t ComputeScaledDivisor(uint32_t aDivisor)
 {
-  return PR_UINT32_MAX/(255*aDivisor);
+  return UINT32_MAX/(255*aDivisor);
 }
   
 static void
@@ -5789,7 +5789,7 @@ nsSVGFEImageElement::OnStartContainer(imgIRequest *aRequest,
 
   // Request a decode
   NS_ABORT_IF_FALSE(aContainer, "who sent the notification then?");
-  aContainer->RequestDecode();
+  aContainer->StartDecoding();
 
   // We have a size - invalidate
   Invalidate();

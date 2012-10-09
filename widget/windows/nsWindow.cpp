@@ -481,8 +481,13 @@ nsWindow::Create(nsIWidget *aParent,
   DWORD extendedStyle = WindowExStyle();
 
   if (mWindowType == eWindowType_popup) {
-    if (!aParent)
+    if (!aParent) {
       parent = NULL;
+    }
+
+    if (mPopupType == ePopupTypeMenu && aInitData->mDropShadow) {
+      extendedStyle |= WS_EX_COMPOSITED;
+    }
 
     if (aInitData->mIsDragPopup) {
       // This flag makes the window transparent to mouse events
@@ -959,6 +964,19 @@ float nsWindow::GetDPI()
     return 96.0f;
   }
   return float(heightPx/heightInches);
+}
+
+double nsWindow::GetDefaultScale()
+{
+  HDC dc = ::GetDC(mWnd);
+  if (!dc)
+    return 1.0;
+
+  // LOGPIXELSY returns the number of logical pixels per inch. This is based
+  // on font DPI settings rather than the actual screen DPI.
+  double pixelsPerInch = ::GetDeviceCaps(dc, LOGPIXELSY);
+  ::ReleaseDC(mWnd, dc);
+  return pixelsPerInch/96.0;
 }
 
 nsWindow* nsWindow::GetParentWindow(bool aIncludeOwner)
@@ -6405,7 +6423,7 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
         keyinput.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
       }
       keyinput.ki.time = 0;
-      keyinput.ki.dwExtraInfo = NULL;
+      keyinput.ki.dwExtraInfo = 0;
 
       sRedirectedKeyDownEventPreventedDefault = noDefault;
       sRedirectedKeyDown = aMsg;
@@ -7917,7 +7935,7 @@ nsWindow::DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLPara
 
       // If we're dealing with menus, we probably have submenus and we don't
       // want to rollup if the click is in a parent menu of the current submenu.
-      uint32_t popupsToRollup = PR_UINT32_MAX;
+      uint32_t popupsToRollup = UINT32_MAX;
       if (rollup) {
         if ( sRollupListener ) {
           nsAutoTArray<nsIWidget*, 5> widgetChain;
@@ -7941,7 +7959,7 @@ nsWindow::DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLPara
         } // if rollup listener knows about menus
       }
 
-      if (inMsg == WM_MOUSEACTIVATE && popupsToRollup == PR_UINT32_MAX) {
+      if (inMsg == WM_MOUSEACTIVATE && popupsToRollup == UINT32_MAX) {
         // Prevent the click inside the popup from causing a change in window
         // activation. Since the popup is shown non-activated, we need to eat
         // any requests to activate the window while it is displayed. Windows
@@ -8004,7 +8022,7 @@ nsWindow::DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLPara
         // if we are only rolling up some popups, don't activate and don't let
         // the event go through. This prevents clicks menus higher in the
         // chain from opening when a context menu is open
-        if (popupsToRollup != PR_UINT32_MAX && inMsg == WM_MOUSEACTIVATE) {
+        if (popupsToRollup != UINT32_MAX && inMsg == WM_MOUSEACTIVATE) {
           *outResult = MA_NOACTIVATEANDEAT;
           return TRUE;
         }

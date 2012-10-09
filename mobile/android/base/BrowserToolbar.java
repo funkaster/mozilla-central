@@ -366,8 +366,10 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             case CLOSED:
             case ADDED:
                 updateTabCountAndAnimate(Tabs.getInstance().getCount());
-                updateBackButton(false);
-                updateForwardButton(false);
+                if (Tabs.getInstance().isSelectedTab(tab)) {
+                    updateBackButton(tab.canDoBack());
+                    updateForwardButton(tab.canDoForward());
+                }
                 break;
         }
     }
@@ -715,7 +717,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
 
             // Setting a null background makes the popup to not close on touching outside.
             setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            setWindowLayoutMode(ViewGroup.LayoutParams.WRAP_CONTENT,
+            setWindowLayoutMode(View.MeasureSpec.makeMeasureSpec(context.getResources().getDimensionPixelSize(R.dimen.menu_popup_width), View.MeasureSpec.AT_MOST),
                                 ViewGroup.LayoutParams.WRAP_CONTENT);
 
             LayoutInflater inflater = LayoutInflater.from(context);

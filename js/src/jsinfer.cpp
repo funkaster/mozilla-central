@@ -58,11 +58,6 @@ id_prototype(JSContext *cx) {
 }
 
 static inline jsid
-id_arguments(JSContext *cx) {
-    return NameToId(cx->names().arguments);
-}
-
-static inline jsid
 id_length(JSContext *cx) {
     return NameToId(cx->names().length);
 }
@@ -80,18 +75,6 @@ id_constructor(JSContext *cx) {
 static inline jsid
 id_caller(JSContext *cx) {
     return NameToId(cx->names().caller);
-}
-
-static inline jsid
-id_toString(JSContext *cx)
-{
-    return NameToId(cx->names().toString);
-}
-
-static inline jsid
-id_toSource(JSContext *cx)
-{
-    return NameToId(cx->names().toSource);
 }
 
 #ifdef DEBUG
@@ -402,7 +385,7 @@ TypeSet::add(JSContext *cx, TypeConstraint *constraint, bool callExisting)
 }
 
 void
-TypeSet::print(JSContext *cx)
+TypeSet::print()
 {
     if (flags & TYPE_FLAG_OWN_PROPERTY)
         printf(" [own]");
@@ -1315,6 +1298,16 @@ TypeConstraintCall::newType(JSContext *cx, TypeSet *source, Type type)
                 }
             }
 
+            if (native == js_String && callsite->isNew) {
+                // Note that "new String()" returns a String object and "String()"
+                // returns a primitive string.
+                TypeObject *res = TypeScript::StandardType(cx, script, JSProto_String);
+                if (!res)
+                    return;
+
+                callsite->returnTypes->addType(cx, Type::ObjectType(res));
+            }
+
             return;
         }
 
@@ -2063,6 +2056,27 @@ class TypeConstraintFreezeStack : public TypeConstraint
 // TypeCompartment
 /////////////////////////////////////////////////////////////////////
 
+static inline bool
+TypeInferenceSupported()
+{
+#ifdef JS_METHODJIT
+    // JM+TI will generate FPU instructions with TI enabled. As a workaround,
+    // we disable TI to prevent this on platforms which do not have FPU
+    // support.
+    JSC::MacroAssembler masm;
+    if (!masm.supportsFloatingPoint())
+        return false;
+#endif
+
+#if WTF_ARM_ARCH_VERSION == 6
+    // If building for ARMv6 targets, we can't be guaranteed an FPU,
+    // so we hardcode TI off for consistency (see bug 793740).
+    return false;
+#endif
+
+    return true;
+}
+
 void
 TypeCompartment::init(JSContext *cx)
 {
@@ -2070,13 +2084,14 @@ TypeCompartment::init(JSContext *cx)
 
     compiledInfo.outputIndex = RecompileInfo::NoCompilerRunning;
 
-    if (cx && cx->getRunOptions() & JSOPTION_TYPE_INFERENCE) {
-#ifdef JS_METHODJIT
-        JSC::MacroAssembler masm;
-        if (masm.supportsFloatingPoint())
-#endif
-            inferenceEnabled = true;
+    if (!cx ||
+        !cx->hasRunOption(JSOPTION_TYPE_INFERENCE) ||
+        !TypeInferenceSupported())
+    {
+        return;
     }
+
+    inferenceEnabled = true;
 }
 
 TypeObject *
@@ -2682,11 +2697,32 @@ ScriptAnalysis::addTypeBarrier(JSContext *cx, const jsbytecode *pc, TypeSet *tar
     }
 
     /* Ignore duplicate barriers. */
+    size_t barrierCount = 0;
     TypeBarrier *barrier = code.typeBarriers;
     while (barrier) {
-        if (barrier->target == target && barrier->type == type && !barrier->singleton)
-            return;
+        if (barrier->target == target && !barrier->singleton) {
+            if (barrier->type == type)
+                return;
+            if (barrier->type.isAnyObject() && !type.isUnknown() &&
+                /* type.isAnyObject() must be false, since type != barrier->type */
+                type.isObject())
+            {
+                return;
+            }
+        }
         barrier = barrier->next;
+        barrierCount++;
+    }
+
+    /*
+     * Use a generic object barrier if the number of barriers on an opcode gets
+     * excessive: it is unlikely that we will be able to completely discharge
+     * the barrier anyways without the target being marked as a generic object.
+     */
+    if (barrierCount >= BARRIER_OBJECT_LIMIT &&
+        !type.isUnknown() && !type.isAnyObject() && type.isObject())
+    {
+        type = Type::AnyObjectType();
     }
 
     InferSpew(ISpewOps, "typeBarrier: #%u:%05u: %sT%p%s %s",
@@ -2754,7 +2790,7 @@ TypeCompartment::print(JSContext *cx, bool force)
 #ifdef DEBUG
     for (gc::CellIter i(compartment, gc::FINALIZE_TYPE_OBJECT); !i.done(); i.next()) {
         TypeObject *object = i.get<TypeObject>();
-        object->print(cx);
+        object->print();
     }
 #endif
 
@@ -3471,7 +3507,7 @@ TypeObject::clearNewScript(JSContext *cx)
 }
 
 void
-TypeObject::print(JSContext *cx)
+TypeObject::print()
 {
     printf("%s : %s",
            TypeObjectString(this),
@@ -3507,7 +3543,7 @@ TypeObject::print(JSContext *cx)
         Property *prop = getProperty(i);
         if (prop) {
             printf("\n    %s:", TypeIdString(prop->id));
-            prop->types.print(cx);
+            prop->types.print();
         }
     }
 
@@ -4466,7 +4502,7 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
 }
 
 bool
-ScriptAnalysis::integerOperation(JSContext *cx, jsbytecode *pc)
+ScriptAnalysis::integerOperation(jsbytecode *pc)
 {
     JS_ASSERT(uint32_t(pc - script_->code) < script_->length);
 
@@ -4943,7 +4979,17 @@ CheckNewScriptProperties(JSContext *cx, HandleTypeObject type, JSFunction *fun)
 
     size_t numBytes = sizeof(TypeNewScript)
                     + (initializerList.length() * sizeof(TypeNewScript::Initializer));
+#ifdef JSGC_ROOT_ANALYSIS
+    // calloc can legitimately return a pointer that appears to be poisoned.
+    void *p;
+    do {
+        p = cx->calloc_(numBytes);
+    } while (IsPoisonedPtr(p));
+    type->newScript = (TypeNewScript *) p;
+#else
     type->newScript = (TypeNewScript *) cx->calloc_(numBytes);
+#endif
+
     if (!type->newScript) {
         cx->compartment->types.setPendingNukeTypes(cx);
         return;
@@ -5034,18 +5080,18 @@ ScriptAnalysis::printTypes(JSContext *cx)
 
     printf("locals:");
     printf("\n    return:");
-    TypeScript::ReturnTypes(script_)->print(cx);
+    TypeScript::ReturnTypes(script_)->print();
     printf("\n    this:");
-    TypeScript::ThisTypes(script_)->print(cx);
+    TypeScript::ThisTypes(script_)->print();
 
     for (unsigned i = 0; script_->function() && i < script_->function()->nargs; i++) {
         printf("\n    arg%u:", i);
-        TypeScript::ArgTypes(script_, i)->print(cx);
+        TypeScript::ArgTypes(script_, i)->print();
     }
     for (unsigned i = 0; i < script_->nfixed; i++) {
         if (!trackSlot(LocalSlot(script_, i))) {
             printf("\n    local%u:", i);
-            TypeScript::LocalTypes(script_, i)->print(cx);
+            TypeScript::LocalTypes(script_, i)->print();
         }
     }
     printf("\n");
@@ -5064,14 +5110,14 @@ ScriptAnalysis::printTypes(JSContext *cx)
         if (js_CodeSpec[*pc].format & JOF_TYPESET) {
             TypeSet *types = script_->analysis()->bytecodeTypes(pc);
             printf("  typeset %d:", (int) (types - script_->types->typeArray()));
-            types->print(cx);
+            types->print();
             printf("\n");
         }
 
         unsigned defCount = GetDefCount(script_, offset);
         for (unsigned i = 0; i < defCount; i++) {
             printf("  type %d:", i);
-            pushedTypes(offset, i)->print(cx);
+            pushedTypes(offset, i)->print();
             printf("\n");
         }
 

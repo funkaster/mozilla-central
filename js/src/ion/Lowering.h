@@ -81,6 +81,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
     bool visitNewCallObject(MNewCallObject *ins);
+    bool visitNewStringObject(MNewStringObject *ins);
     bool visitInitProp(MInitProp *ins);
     bool visitCheckOverRecursed(MCheckOverRecursed *ins);
     bool visitDefVar(MDefVar *ins);
@@ -108,6 +109,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitAbs(MAbs *ins);
     bool visitSqrt(MSqrt *ins);
     bool visitPow(MPow *ins);
+    bool visitRandom(MRandom *ins);
     bool visitMathFunction(MMathFunction *ins);
     bool visitAdd(MAdd *ins);
     bool visitSub(MSub *ins);
@@ -126,6 +128,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitTruncateToInt32(MTruncateToInt32 *truncate);
     bool visitToString(MToString *convert);
     bool visitRegExp(MRegExp *ins);
+    bool visitRegExpTest(MRegExpTest *ins);
     bool visitLambda(MLambda *ins);
     bool visitImplicitThis(MImplicitThis *ins);
     bool visitSlots(MSlots *ins);
@@ -150,6 +153,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitStoreElementHole(MStoreElementHole *ins);
     bool visitArrayPopShift(MArrayPopShift *ins);
     bool visitArrayPush(MArrayPush *ins);
+    bool visitArrayConcat(MArrayConcat *ins);
     bool visitLoadTypedArrayElement(MLoadTypedArrayElement *ins);
     bool visitLoadTypedArrayElementHole(MLoadTypedArrayElementHole *ins);
     bool visitClampToUint8(MClampToUint8 *ins);

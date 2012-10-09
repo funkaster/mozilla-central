@@ -16,6 +16,8 @@
 #include "Safepoints.h"
 #include "IonSpewer.h"
 #include "IonMacroAssembler.h"
+#include "PcScriptCache.h"
+#include "PcScriptCache-inl.h"
 #include "gc/Marking.h"
 #include "SnapshotReader.h"
 #include "Safepoints.h"
@@ -123,6 +125,14 @@ IonFrameIterator::isOOLNativeGetter() const
     if (type_ != IonFrame_Exit)
         return false;
     return exitFrame()->footer()->ionCode() == ION_FRAME_OOL_NATIVE_GETTER;
+}
+
+bool
+IonFrameIterator::isOOLPropertyOp() const
+{
+    if (type_ != IonFrame_Exit)
+        return false;
+    return exitFrame()->footer()->ionCode() == ION_FRAME_OOL_PROPERTY_OP;
 }
 
 bool
@@ -349,7 +359,7 @@ ion::HandleException(ResumeFromException *rfe)
 void
 IonActivationIterator::settle()
 {
-    while (activation_ && !activation_->entryfp()) {
+    while (activation_ && activation_->empty()) {
         top_ = activation_->prevIonTop();
         activation_ = activation_->prev();
     }
@@ -540,8 +550,18 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
 
     if (frame.isOOLNativeGetter()) {
         IonOOLNativeGetterExitFrameLayout *oolgetter = frame.exitFrame()->oolNativeGetterExit();
+        gc::MarkIonCodeRoot(trc, oolgetter->stubCode(), "ion-ool-getter-code");
         gc::MarkValueRoot(trc, oolgetter->vp(), "ion-ool-getter-callee");
-        gc::MarkValueRoot(trc, oolgetter->vp() + 1, "ion-ool-getter-this");
+        gc::MarkValueRoot(trc, oolgetter->thisp(), "ion-ool-getter-this");
+        return;
+    }
+ 
+    if (frame.isOOLPropertyOp()) {
+        IonOOLPropertyOpExitFrameLayout *oolgetter = frame.exitFrame()->oolPropertyOpExit();
+        gc::MarkIonCodeRoot(trc, oolgetter->stubCode(), "ion-ool-property-op-code");
+        gc::MarkValueRoot(trc, oolgetter->vp(), "ion-ool-property-op-vp");
+        gc::MarkIdRoot(trc, oolgetter->id(), "ion-ool-property-op-id");
+        gc::MarkObjectRoot(trc, oolgetter->obj(), "ion-ool-property-op-obj");
         return;
     }
 
@@ -662,15 +682,37 @@ ion::GetPcScript(JSContext *cx, MutableHandleScript scriptRes, jsbytecode **pcRe
     JS_ASSERT(cx->fp()->beginsIonActivation());
     IonSpew(IonSpew_Snapshots, "Recover PC & Script from the last frame.");
 
-    // Recover the innermost inlined frame.
-    IonFrameIterator it(cx->runtime->ionTop);
-    ++it;
+    JSRuntime *rt = cx->runtime;
+
+    // Recover the return address.
+    IonFrameIterator it(rt->ionTop);
+    uint8_t *retAddr = it.returnAddress();
+    uint32_t hash = PcScriptCache::Hash(retAddr);
+    JS_ASSERT(retAddr != NULL);
+
+    // Lazily initialize the cache. The allocation may safely fail and will not GC.
+    if (JS_UNLIKELY(rt->ionPcScriptCache == NULL)) {
+        rt->ionPcScriptCache = (PcScriptCache *)js_malloc(sizeof(struct PcScriptCache));
+        if (rt->ionPcScriptCache)
+            rt->ionPcScriptCache->clear(rt->gcNumber);
+    }
+
+    // Attempt to lookup address in cache.
+    if (rt->ionPcScriptCache && rt->ionPcScriptCache->get(rt, hash, retAddr, scriptRes, pcRes))
+        return;
+
+    // Lookup failed: undertake expensive process to recover the innermost inlined frame.
+    ++it; // Skip exit frame.
     InlineFrameIterator ifi(&it);
 
     // Set the result.
     scriptRes.set(ifi.script());
     if (pcRes)
         *pcRes = ifi.pc();
+
+    // Add entry to cache.
+    if (rt->ionPcScriptCache)
+        rt->ionPcScriptCache->add(hash, retAddr, ifi.pc(), ifi.script());
 }
 
 void
@@ -974,7 +1016,14 @@ IonFrameIterator::isConstructing() const
 
     JS_ASSERT(parent.done());
 
-    // JM ICs do not inline Ion constructor calls.
+    // If entryfp is not set, we entered Ion via a C++ native, like Array.map,
+    // using FastInvoke. FastInvoke is never used for constructor calls.
+    if (!activation_->entryfp())
+        return false;
+
+    // If callingIntoIon, we either entered Ion from JM or entered Ion from
+    // a C++ native using FastInvoke. In both of these cases we don't handle
+    // constructor calls.
     if (activation_->entryfp()->callingIntoIon())
         return false;
     JS_ASSERT(activation_->entryfp()->runningInIon());

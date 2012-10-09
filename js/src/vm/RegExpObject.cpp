@@ -239,7 +239,7 @@ RegExpCode::execute(JSContext *cx, const jschar *chars, size_t length, size_t st
 /* RegExpObject */
 
 static void
-regexp_trace(JSTracer *trc, JSObject *obj)
+regexp_trace(JSTracer *trc, RawObject obj)
 {
      /*
       * We have to check both conditions, since:
@@ -617,6 +617,12 @@ RegExpCompartment::get(JSContext *cx, JSAtom *atom, JSString *opt, RegExpGuard *
     return get(cx, atom, flags, g);
 }
 
+size_t
+RegExpCompartment::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf)
+{
+    return map_.sizeOfExcludingThis(mallocSizeOf);
+}
+
 /* Functions */
 
 JSObject *
@@ -680,7 +686,7 @@ js::XDRScriptRegExpObject(XDRState<mode> *xdr, HeapPtrObject *objp)
         source = reobj.getSource();
         flagsword = reobj.getFlags();
     }
-    if (!XDRAtom(xdr, source.address()) || !xdr->codeUint32(&flagsword))
+    if (!XDRAtom(xdr, &source) || !xdr->codeUint32(&flagsword))
         return false;
     if (mode == XDR_DECODE) {
         RegExpFlag flags = RegExpFlag(flagsword);

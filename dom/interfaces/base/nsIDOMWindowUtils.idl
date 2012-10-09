@@ -40,7 +40,7 @@ interface nsIDOMTouch;
 interface nsIDOMClientRect;
 interface nsIURI;
 
-[scriptable, uuid(90d8e97b-2c61-4c05-9f1c-e568d22f5bdc)]
+[scriptable, uuid(a76927b7-4aca-4cd1-9c2b-a6b4789b88c3)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -698,6 +698,14 @@ interface nsIDOMWindowUtils : nsISupports {
   readonly attribute float screenPixelsPerCSSPixel;
 
   /**
+   * Get the current zoom factor.
+   * This is _approximately_ the same as nsIMarkupDocumentViewer.fullZoom,
+   * but takes into account Gecko's quantization of the zoom factor, which is
+   * implemented by adjusting the (integer) number of appUnits per devPixel.
+   */
+  readonly attribute float fullZoom;
+
+  /**
    * Dispatches aEvent via the nsIPresShell object of the window's document.
    * The event is dispatched to aTarget, which should be an object
    * which implements nsIContent interface (#element, #text, etc).
@@ -1262,4 +1270,11 @@ interface nsIDOMWindowUtils : nsISupports {
    */
   void removeSheet(in nsIURI sheetURI,
                                 in unsigned long type);
+
+  /**
+   * Returns true if a user input is being handled.
+   *
+   * This calls nsEventStateManager::IsHandlingUserInput().
+   */
+  readonly attribute boolean isHandlingUserInput;
 };

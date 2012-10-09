@@ -1416,7 +1416,7 @@ nsNSSComponent::DefineNextTimer()
      
   //Define the firing interval, from NOW
   if ( now < nextFiring) {
-    LL_SUB(diff,nextFiring,now);
+    diff = nextFiring - now;
     LL_L2UI(interval, diff);
     //Now, we are doing 32 operations - so, don't need LL_ functions...
     interval = interval/PR_USEC_PER_MSEC;
@@ -2778,11 +2778,11 @@ nsCryptoHash::UpdateFromStream(nsIInputStream *data, uint32_t aLen)
   if (NS_FAILED(rv))
     return rv;
 
-  // if the user has passed PR_UINT32_MAX, then read
+  // if the user has passed UINT32_MAX, then read
   // everything in the stream
 
   uint64_t len = aLen;
-  if (aLen == PR_UINT32_MAX)
+  if (aLen == UINT32_MAX)
     len = n;
 
   // So, if the stream has NO data available for the hash,
@@ -2971,11 +2971,11 @@ NS_IMETHODIMP nsCryptoHMAC::UpdateFromStream(nsIInputStream *aStream, uint32_t a
   if (NS_FAILED(rv))
     return rv;
 
-  // if the user has passed PR_UINT32_MAX, then read
+  // if the user has passed UINT32_MAX, then read
   // everything in the stream
 
   uint64_t len = aLen;
-  if (aLen == PR_UINT32_MAX)
+  if (aLen == UINT32_MAX)
     len = n;
 
   // So, if the stream has NO data available for the hash,

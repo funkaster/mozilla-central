@@ -317,13 +317,13 @@ inline void MorphMultiSlot(JSObject *obj)
     MOZ_ASSERT(!IS_SLIM_WRAPPER(obj));
 }
 
-inline void SetExpandoChain(JSObject *obj, JSObject *chain)
+inline void SetWNExpandoChain(JSObject *obj, JSObject *chain)
 {
     MOZ_ASSERT(IS_WN_WRAPPER(obj));
     JS_SetReservedSlot(obj, WRAPPER_MULTISLOT, JS::ObjectOrNullValue(chain));
 }
 
-inline JSObject* GetExpandoChain(JSObject *obj)
+inline JSObject* GetWNExpandoChain(JSObject *obj)
 {
     MOZ_ASSERT(IS_WN_WRAPPER(obj));
     return JS_GetReservedSlot(obj, WRAPPER_MULTISLOT).toObjectOrNull();
@@ -726,6 +726,45 @@ public:
     JSBool OnJSContextNew(JSContext* cx);
 
     bool DeferredRelease(nsISupports* obj);
+
+
+    /**
+     * Infrastructure for classes that need to defer part of the finalization
+     * until after the GC has run, for example for objects that we don't want to
+     * destroy during the GC.
+     */
+
+    // Called once before the deferred finalization starts. Should hand off the
+    // buffer with things to finalize in the return value.
+    typedef void* (*DeferredFinalizeStartFunction)();
+
+    // Called to finalize a number of objects. Slice is the number of objects to
+    // finalize, if it's -1 all objects should be finalized. data is the pointer
+    // returned by DeferredFinalizeStartFunction. Should return if it finalized
+    // all objects remaining in the buffer.
+    typedef bool (*DeferredFinalizeFunction)(int32_t slice, void* data);
+
+private:
+    struct DeferredFinalizeFunctions
+    {
+        DeferredFinalizeStartFunction start;
+        DeferredFinalizeFunction run;
+    };
+    nsAutoTArray<DeferredFinalizeFunctions, 16> mDeferredFinalizeFunctions;
+
+public:
+    // Register deferred finalization functions. Should only be called once per
+    // pair of start and run.
+    bool RegisterDeferredFinalize(DeferredFinalizeStartFunction start,
+                                  DeferredFinalizeFunction run)
+    {
+        DeferredFinalizeFunctions* item =
+            mDeferredFinalizeFunctions.AppendElement();
+        item->start = start;
+        item->run = run;
+        return true;
+    }
+
 
     JSBool GetDoingFinalization() const {return mDoingFinalization;}
 
@@ -4382,8 +4421,7 @@ GetCompartmentPrivate(JSObject *object)
 
 inline bool IsUniversalXPConnectEnabled(JSCompartment *compartment)
 {
-    CompartmentPrivate *priv =
-      static_cast<CompartmentPrivate*>(JS_GetCompartmentPrivate(compartment));
+    CompartmentPrivate *priv = GetCompartmentPrivate(compartment);
     if (!priv)
         return false;
     return priv->universalXPConnectEnabled;
@@ -4402,8 +4440,7 @@ inline bool EnableUniversalXPConnect(JSContext *cx)
     JSCompartment *compartment = js::GetContextCompartment(cx);
     if (!compartment)
         return true;
-    CompartmentPrivate *priv =
-      static_cast<CompartmentPrivate*>(JS_GetCompartmentPrivate(compartment));
+    CompartmentPrivate *priv = GetCompartmentPrivate(compartment);
     if (!priv)
         return true;
     priv->universalXPConnectEnabled = true;

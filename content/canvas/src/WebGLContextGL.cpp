@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "WebGLContext.h"
+#include "WebGLContextUtils.h"
 
 #include "nsString.h"
 #include "nsDebug.h"
@@ -303,6 +304,15 @@ GLenum WebGLContext::CheckedBufferData(GLenum target,
                                        const GLvoid *data,
                                        GLenum usage)
 {
+#ifdef XP_MACOSX
+    // bug 790879
+    if (gl->WorkAroundDriverBugs() &&
+        int64_t(size) > INT32_MAX) // the cast avoids a potential always-true warning on 32bit
+    {
+        GenerateWarning("Rejecting valid bufferData call with size %lu to avoid a Mac bug", size);
+        return LOCAL_GL_INVALID_VALUE;
+    }
+#endif
     WebGLBuffer *boundBuffer = NULL;
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -662,6 +672,29 @@ WebGLContext::CopyTexSubImage2D_base(WebGLenum target,
     const char *info = sub ? "copyTexSubImage2D" : "copyTexImage2D";
 
     MakeContextCurrent();
+
+    WebGLTexture *tex = activeBoundTextureForTarget(target);
+
+    if (!tex)
+        return ErrorInvalidOperation("%s: no texture is bound to this target");
+
+#ifdef MOZ_X11
+    // bug 785734
+    if (gl->WorkAroundDriverBugs() &&
+        mIsMesa &&
+        level > 0 &&
+        !sub)
+    {
+        size_t face = WebGLTexture::FaceForTarget(target);
+        if (!tex->HasImageInfoAt(0, face) ||
+            tex->ImageInfoAt(0, face).Width() <= width)
+        {
+            return  ErrorInvalidOperation("%s: rejecting valid call to avoid Mesa driver crash. "
+                                          "See Mozilla bug 785734",
+                                          info);
+        }
+    }
+#endif
 
     if (CanvasUtils::CheckSaneSubrectSize(x, y, width, height, framebufferWidth, framebufferHeight)) {
         if (sub)
@@ -1691,7 +1724,7 @@ WebGLContext::GenerateMipmap(WebGLenum target)
     if (IsTextureFormatCompressed(format))
         return ErrorInvalidOperation("generateMipmap: Texture data at level zero is compressed.");
 
-    if (IsExtensionEnabled(WEBGL_depth_texture) && 
+    if (IsExtensionEnabled(WEBGL_depth_texture) &&
         (format == LOCAL_GL_DEPTH_COMPONENT || format == LOCAL_GL_DEPTH_STENCIL))
         return ErrorInvalidOperation("generateMipmap: "
                                      "A texture that has a base internal format of "
@@ -2104,79 +2137,37 @@ WebGLContext::GetParameter(JSContext* cx, WebGLenum pname, ErrorResult& rv)
 
         case LOCAL_GL_ARRAY_BUFFER_BINDING:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBoundArrayBuffer.get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBoundArrayBuffer.get(), rv);
         }
 
         case LOCAL_GL_ELEMENT_ARRAY_BUFFER_BINDING:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBoundElementArrayBuffer.get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBoundElementArrayBuffer.get(), rv);
         }
 
         case LOCAL_GL_RENDERBUFFER_BINDING:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBoundRenderbuffer.get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBoundRenderbuffer.get(), rv);
         }
 
         case LOCAL_GL_FRAMEBUFFER_BINDING:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBoundFramebuffer.get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBoundFramebuffer.get(), rv);
         }
 
         case LOCAL_GL_CURRENT_PROGRAM:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(), mCurrentProgram.get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mCurrentProgram.get(), rv);
         }
 
         case LOCAL_GL_TEXTURE_BINDING_2D:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBound2DTextures[mActiveTexture].get(), &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBound2DTextures[mActiveTexture].get(), rv);
         }
 
         case LOCAL_GL_TEXTURE_BINDING_CUBE_MAP:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mBoundCubeMapTextures[mActiveTexture].get(),
-                                 &v)) {
-                rv = NS_ERROR_FAILURE;
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mBoundCubeMapTextures[mActiveTexture].get(), rv);
         }
 
         default:
@@ -2263,14 +2254,7 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
             {
-                JS::Value v;
-                if (!dom::WrapObject(cx, GetWrapper(),
-                                     const_cast<WebGLRenderbuffer*>(fba.Renderbuffer()),
-                                     &v)) {
-                    rv.Throw(NS_ERROR_FAILURE);
-                    return JS::NullValue();
-                }
-                return v;
+                return WebGLObjectAsJSValue(cx, fba.Renderbuffer(), rv);
             }
 
             default:
@@ -2284,14 +2268,7 @@ WebGLContext::GetFramebufferAttachmentParameter(JSContext* cx,
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
             {
-                JS::Value v;
-                if (!dom::WrapObject(cx, GetWrapper(),
-                                     const_cast<WebGLTexture*>(fba.Texture()),
-                                     &v)) {
-                    rv = NS_ERROR_FAILURE;
-                    return JS::NullValue();
-                }
-                return v;
+                return WebGLObjectAsJSValue(cx, fba.Texture(), rv);
             }
 
             case LOCAL_GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL:
@@ -2637,7 +2614,6 @@ WebGLContext::GetTexParameter(WebGLenum target, WebGLenum pname)
                 return JS::DoubleValue(f);
             }
 
-            
             ErrorInvalidEnumInfo("getTexParameter: parameter", pname);
             break;
 
@@ -2828,13 +2804,7 @@ WebGLContext::GetVertexAttrib(JSContext* cx, WebGLuint index, WebGLenum pname,
     switch (pname) {
         case LOCAL_GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:
         {
-            JS::Value v;
-            if (!dom::WrapObject(cx, GetWrapper(),
-                                 mAttribBuffers[index].buf.get(), &v)) {
-                rv.Throw(NS_ERROR_FAILURE);
-                return JS::NullValue();
-            }
-            return v;
+            return WebGLObjectAsJSValue(cx, mAttribBuffers[index].buf.get(), rv);
         }
 
         case LOCAL_GL_VERTEX_ATTRIB_ARRAY_STRIDE:
@@ -4459,7 +4429,7 @@ WebGLContext::GetShaderPrecisionFormat(WebGLenum shadertype, WebGLenum precision
     gl->fGetShaderPrecisionFormat(shadertype, precisiontype, range, &precision);
 
     WebGLShaderPrecisionFormat *retShaderPrecisionFormat
-        = new WebGLShaderPrecisionFormat(range[0], range[1], precision);
+        = new WebGLShaderPrecisionFormat(this, range[0], range[1], precision);
     NS_ADDREF(retShaderPrecisionFormat);
     return retShaderPrecisionFormat;
 }
@@ -4657,7 +4627,6 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
     if (border != 0)
         return ErrorInvalidValue("texImage2D: border must be 0");
 
-
     if (format == LOCAL_GL_DEPTH_COMPONENT || format == LOCAL_GL_DEPTH_STENCIL) {
         if (IsExtensionEnabled(WEBGL_depth_texture)) {
             if (target != LOCAL_GL_TEXTURE_2D || data != NULL || level != 0)
@@ -4707,6 +4676,22 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
     // Handle ES2 and GL differences in floating point internal formats.  Note that
     // format == internalformat, as checked above and as required by ES.
     internalformat = InternalFormatForFormatAndType(format, type, gl->IsGLES2());
+
+#ifdef MOZ_X11
+    // bug 785734
+    if (gl->WorkAroundDriverBugs() &&
+        mIsMesa &&
+        level > 0)
+    {
+        size_t face = WebGLTexture::FaceForTarget(target);
+        if (!tex->HasImageInfoAt(0, face) ||
+            tex->ImageInfoAt(0, face).Width() <= width)
+        {
+            return  ErrorInvalidOperation("texImage2D: rejecting valid call to avoid Mesa driver crash. "
+                                          "See Mozilla bug 785734");
+        }
+    }
+#endif
 
     GLenum error = LOCAL_GL_NO_ERROR;
 
@@ -4828,7 +4813,7 @@ WebGLContext::TexSubImage2D_base(WebGLenum target, WebGLint level,
             return ErrorInvalidValue("texSubImage2D: with level > 0, width and height must be powers of two");
     }
 
-    if (IsExtensionEnabled(WEBGL_depth_texture) && 
+    if (IsExtensionEnabled(WEBGL_depth_texture) &&
         (format == LOCAL_GL_DEPTH_COMPONENT || format == LOCAL_GL_DEPTH_STENCIL)) {
         return ErrorInvalidOperation("texSubImage2D: format");
     }

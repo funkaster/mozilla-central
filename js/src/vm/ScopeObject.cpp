@@ -741,7 +741,7 @@ js::XDRStaticBlockObject(XDRState<mode> *xdr, HandleObject enclosingScope, Handl
          * properties to XDR, stored as id/shortid pairs.
          */
         for (unsigned i = 0; i < count; i++) {
-            JSAtom *atom;
+            RootedAtom atom(cx);
             if (!XDRAtom(xdr, &atom))
                 return false;
 
@@ -786,10 +786,9 @@ js::XDRStaticBlockObject(XDRState<mode> *xdr, HandleObject enclosingScope, Handl
             JS_ASSERT(JSID_IS_ATOM(propid) || JSID_IS_INT(propid));
 
             /* The empty string indicates an int id. */
-            JSAtom *atom = JSID_IS_ATOM(propid)
-                           ? JSID_TO_ATOM(propid)
-                           : cx->runtime->emptyString;
-
+            RootedAtom atom(cx, JSID_IS_ATOM(propid)
+                                ? JSID_TO_ATOM(propid)
+                                : cx->runtime->emptyString);
             if (!XDRAtom(xdr, &atom))
                 return false;
 
@@ -1124,7 +1123,7 @@ class DebugScopeProxy : public BaseProxyHandler
                 return false;
 
             Bindings &bindings = script->bindings;
-            BindingIter bi(script->bindings);
+            BindingIter bi(script);
             while (bi && NameToId(bi->name()) != id)
                 bi++;
             if (!bi)
@@ -1395,7 +1394,8 @@ class DebugScopeProxy : public BaseProxyHandler
          * they must be manually appended here.
          */
         if (scope.isCall() && !scope.asCall().isForEval()) {
-            for (BindingIter bi(scope.asCall().callee().script()->bindings); bi; bi++) {
+            RootedScript script(cx, scope.asCall().callee().script());
+            for (BindingIter bi(script); bi; bi++) {
                 if (!bi->aliased() && !props.append(NameToId(bi->name())))
                     return false;
             }
@@ -1433,7 +1433,8 @@ class DebugScopeProxy : public BaseProxyHandler
          * a manual search is necessary.
          */
         if (!found && scope.isCall() && !scope.asCall().isForEval()) {
-            for (BindingIter bi(scope.asCall().callee().script()->bindings); bi; bi++) {
+            RootedScript script(cx, scope.asCall().callee().script());
+            for (BindingIter bi(script); bi; bi++) {
                 if (!bi->aliased() && NameToId(bi->name()) == id) {
                     found = true;
                     break;

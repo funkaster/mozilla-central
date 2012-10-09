@@ -265,7 +265,7 @@ class IonBuilder : public MIRGenerator
     bool initScopeChain();
     bool pushConstant(const Value &v);
     bool pushTypeBarrier(MInstruction *ins, types::StackTypeSet *actual, types::StackTypeSet *observed);
-    void monitorResult(MInstruction *ins, types::TypeSet *types);
+    void monitorResult(MInstruction *ins, types::TypeSet *barrier, types::TypeSet *types);
 
     JSObject *getSingletonPrototype(JSFunction *target);
 
@@ -370,6 +370,7 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineArray(uint32 argc, bool constructing);
     InliningStatus inlineArrayPopShift(MArrayPopShift::Mode mode, uint32 argc, bool constructing);
     InliningStatus inlineArrayPush(uint32 argc, bool constructing);
+    InliningStatus inlineArrayConcat(uint32 argc, bool constructing);
 
     // Math natives.
     InliningStatus inlineMathAbs(uint32 argc, bool constructing);
@@ -378,13 +379,18 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineMathSqrt(uint32 argc, bool constructing);
     InliningStatus inlineMathMinMax(bool max, uint32 argc, bool constructing);
     InliningStatus inlineMathPow(uint32 argc, bool constructing);
+    InliningStatus inlineMathRandom(uint32 argc, bool constructing);
     InliningStatus inlineMathFunction(MMathFunction::Function function, uint32 argc,
                                       bool constructing);
 
     // String natives.
+    InliningStatus inlineStringObject(uint32 argc, bool constructing);
     InliningStatus inlineStrCharCodeAt(uint32 argc, bool constructing);
     InliningStatus inlineStrFromCharCode(uint32 argc, bool constructing);
     InliningStatus inlineStrCharAt(uint32 argc, bool constructing);
+
+    // RegExp natives.
+    InliningStatus inlineRegExpTest(uint32 argc, bool constructing);
 
     InliningStatus inlineNativeCall(JSNative native, uint32 argc, bool constructing);
 
@@ -393,7 +399,7 @@ class IonBuilder : public MIRGenerator
                           Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns);
     bool inlineScriptedCall(AutoObjectVector &targets, uint32 argc, bool constructing,
                             types::StackTypeSet *types, types::StackTypeSet *barrier);
-    bool makeInliningDecision(AutoObjectVector &targets);
+    bool makeInliningDecision(AutoObjectVector &targets, uint32 argc);
 
     MCall *makeCallHelper(HandleFunction target, uint32 argc, bool constructing);
     bool makeCallBarrier(HandleFunction target, uint32 argc, bool constructing,

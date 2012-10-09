@@ -408,7 +408,7 @@ PluginModuleParent::ProcessFirstMinidump()
         return;
     }
 
-    uint32_t sequence = PR_UINT32_MAX;
+    uint32_t sequence = UINT32_MAX;
     nsCOMPtr<nsIFile> dumpFile;
     nsAutoCString flashProcessType;
     TakeMinidump(getter_AddRefs(dumpFile), &sequence);
@@ -1455,8 +1455,10 @@ PluginModuleParent::InitializeInjector()
 void
 PluginModuleParent::OnCrash(DWORD processID)
 {
-    GetIPCChannel()->CloseWithError();
-    KillProcess(OtherProcess(), 1, false);
+    if (!mShutdown) {
+        GetIPCChannel()->CloseWithError();
+        KillProcess(OtherProcess(), 1, false);
+    }
 }
 
 #endif // MOZ_CRASHREPORTER_INJECTOR

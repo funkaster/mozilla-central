@@ -60,6 +60,7 @@ pref("browser.cache.memory.capacity", 1024); // kilobytes
 
 /* image cache prefs */
 pref("image.cache.size", 1048576); // bytes
+pref("image.high_quality_downscaling.enabled", false);
 
 /* offline cache prefs */
 pref("browser.offline-apps.notify", true);
@@ -126,12 +127,6 @@ pref("browser.download.manager.openDelay", 0);
 pref("browser.download.manager.focusWhenStarting", false);
 pref("browser.download.manager.flashCount", 2);
 pref("browser.download.manager.displayedHistoryDays", 7);
-
-/* download alerts (disabled above) */
-pref("alerts.slideIncrement", 1);
-pref("alerts.slideIncrementTime", 10);
-pref("alerts.totalOpenTime", 6000);
-pref("alerts.height", 50);
 
 /* download helper */
 pref("browser.helperApps.deleteTempFileOnExit", false);
@@ -249,6 +244,7 @@ pref("browser.search.updateinterval", 6);
 
 // disable search suggestions by default
 pref("browser.search.suggest.enabled", false);
+pref("browser.search.suggest.prompted", false);
 
 // Tell the search service to load search plugins from the locale JAR
 pref("browser.search.loadFromJars", true);
@@ -539,8 +535,8 @@ pref("image.mem.min_discard_timeout_ms", 10000);
 pref("dom.w3c_touch_events.enabled", true);
 
 #ifdef MOZ_SAFE_BROWSING
-pref("browser.safebrowsing.enabled", false);
-pref("browser.safebrowsing.malware.enabled", false);
+pref("browser.safebrowsing.enabled", true);
+pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.debug", false);
 
 pref("browser.safebrowsing.updateURL", "http://safebrowsing.clients.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");

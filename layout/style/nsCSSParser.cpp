@@ -3597,7 +3597,7 @@ CSSParserImpl::ParsePseudoClassWithIdentArg(nsCSSSelector& aSelector,
     return eSelectorParsingStatus_Error; // our caller calls SkipUntil(')')
   }
 
-  // -moz-locale-dir and :dir can only have values of 'ltr' or 'rtl'.
+  // -moz-locale-dir and -moz-dir can only have values of 'ltr' or 'rtl'.
   if (aType == nsCSSPseudoClasses::ePseudoClass_mozLocaleDir ||
       aType == nsCSSPseudoClasses::ePseudoClass_dir) {
     nsContentUtils::ASCIIToLower(mToken.mIdent); // case insensitive
@@ -5245,7 +5245,7 @@ CSSParserImpl::ParseColorStop(nsCSSValueGradient* aGradient)
 
   // Stop positions do not have to fall between the starting-point and
   // ending-point, so we don't use ParseNonNegativeVariant.
-  if (!ParseVariant(stop->mLocation, VARIANT_LP, nullptr)) {
+  if (!ParseVariant(stop->mLocation, VARIANT_LP | VARIANT_CALC, nullptr)) {
     stop->mLocation.SetNoneValue();
   }
   return true;

@@ -26,6 +26,9 @@
 #include "jspropertycacheinlines.h"
 #include "jstypedarrayinlines.h"
 
+#include "ion/Ion.h"
+#include "ion/IonCompartment.h"
+
 #include "vm/Stack-inl.h"
 
 namespace js {
@@ -393,7 +396,7 @@ FetchName(JSContext *cx, HandleObject obj, HandleObject obj2, HandlePropertyName
 }
 
 inline bool
-IntrinsicNameOperation(JSContext *cx, JSScript *script, jsbytecode *pc, Value *vp)
+IntrinsicNameOperation(JSContext *cx, JSScript *script, jsbytecode *pc, MutableHandleValue vp)
 {
     JSOp op = JSOp(*pc);
     RootedPropertyName name(cx);
@@ -685,9 +688,20 @@ GetObjectElementOperation(JSContext *cx, JSOp op, HandleObject obj, const Value 
         return js_GetXMLMethod(cx, obj, id, res);
     }
 #endif
+    // Don't call GetPcScript (needed for analysis) from inside Ion since it's expensive.
+    bool analyze = !cx->fp()->beginsIonActivation();
 
     uint32_t index;
     if (IsDefinitelyIndex(rref, &index)) {
+        if (analyze && !obj->isNative() && !obj->isArray()) {
+            RootedScript script(cx, NULL);
+            jsbytecode *pc = NULL;
+            types::TypeScript::GetPcScript(cx, &script, &pc);
+
+            if (script->hasAnalysis())
+                script->analysis()->getCode(pc).nonNativeGetElement = true;
+        }
+
         do {
             if (obj->isDenseArray()) {
                 if (index < obj->getDenseArrayInitializedLength()) {
@@ -703,15 +717,17 @@ GetObjectElementOperation(JSContext *cx, JSOp op, HandleObject obj, const Value 
                 return false;
         } while(0);
     } else {
-        if (!cx->fp()->beginsIonActivation()) {
-            // Don't update getStringElement if called from Ion code, since
-            // ion::GetPcScript is expensive.
-            RootedScript script(cx);
-            jsbytecode *pc;
+        if (analyze) {
+            RootedScript script(cx, NULL);
+            jsbytecode *pc = NULL;
             types::TypeScript::GetPcScript(cx, &script, &pc);
 
-            if (script->hasAnalysis())
+            if (script->hasAnalysis()) {
                 script->analysis()->getCode(pc).getStringElement = true;
+
+                if (!obj->isArray() && !obj->isNative())
+                    script->analysis()->getCode(pc).nonNativeGetElement = true;
+            }
         }
 
         SpecialId special;
@@ -800,7 +816,7 @@ SetObjectElementOperation(JSContext *cx, Handle<JSObject*> obj, HandleId id, con
             int32_t i = JSID_TO_INT(id);
             if ((uint32_t)i < length) {
                 if (obj->getDenseArrayElement(i).isMagic(JS_ARRAY_HOLE)) {
-                    if (js_PrototypeHasIndexedProperties(cx, obj))
+                    if (js_PrototypeHasIndexedProperties(obj))
                         break;
                     if ((uint32_t)i >= obj->getArrayLength())
                         JSObject::setArrayLength(cx, obj, i + 1);
@@ -965,6 +981,83 @@ ReportIfNotFunction(JSContext *cx, const Value &v, MaybeConstruct construct = NO
     ReportIsNotFunction(cx, v, construct);
     return NULL;
 }
+
+/*
+ * FastInvokeGuard is used to optimize calls to JS functions from natives written
+ * in C++, for instance Array.map. If the callee is not Ion-compiled, this will
+ * just call Invoke. If the callee has a valid IonScript, however, it will enter
+ * Ion directly.
+ */
+class FastInvokeGuard
+{
+    InvokeArgsGuard args_;
+    RootedFunction fun_;
+    RootedScript script_;
+#ifdef JS_ION
+    ion::IonContext ictx_;
+    bool useIon_;
+#endif
+
+  public:
+    FastInvokeGuard(JSContext *cx, const Value &fval)
+      : fun_(cx),
+        script_(cx)
+#ifdef JS_ION
+        , ictx_(cx, cx->compartment, NULL),
+        useIon_(ion::IsEnabled(cx))
+#endif
+    {
+        initFunction(fval);
+    }
+
+    void initFunction(const Value &fval) {
+        if (fval.isObject() && fval.toObject().isFunction()) {
+            JSFunction *fun = fval.toObject().toFunction();
+            if (fun->isInterpreted()) {
+                fun_ = fun;
+                script_ = fun->script();
+            }
+        }
+    }
+
+    InvokeArgsGuard &args() {
+        return args_;
+    }
+
+    bool invoke(JSContext *cx) {
+#ifdef JS_ION
+        if (useIon_ && fun_) {
+            JS_ASSERT(fun_->script() == script_);
+
+            ion::MethodStatus status = ion::CanEnterUsingFastInvoke(cx, script_);
+            if (status == ion::Method_Error)
+                return false;
+            if (status == ion::Method_Compiled) {
+                ion::IonExecStatus result = ion::FastInvoke(cx, fun_, args_);
+                if (result == ion::IonExec_Error)
+                    return false;
+
+                JS_ASSERT(result == ion::IonExec_Ok);
+                return true;
+            }
+
+            JS_ASSERT(status == ion::Method_Skipped);
+
+            if (script_->canIonCompile()) {
+                // This script is not yet hot. Since calling into Ion is much
+                // faster here, bump the use count a bit to account for this.
+                script_->incUseCount(5);
+            }
+        }
+#endif
+
+        return Invoke(cx, args_);
+    }
+
+  private:
+    FastInvokeGuard(const FastInvokeGuard& other) MOZ_DELETE;
+    const FastInvokeGuard& operator=(const FastInvokeGuard& other) MOZ_DELETE;
+};
 
 }  /* namespace js */
 

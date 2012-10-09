@@ -281,6 +281,70 @@ nsMultipartProxyListener::OnDataAvailable(nsIRequest *aRequest,
                                         count);
 }
 
+//-----------------------------------------------------------------------------
+// XMLHttpRequestAuthPrompt
+//-----------------------------------------------------------------------------
+
+class XMLHttpRequestAuthPrompt : public nsIAuthPrompt
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIAUTHPROMPT
+
+  XMLHttpRequestAuthPrompt();
+  virtual ~XMLHttpRequestAuthPrompt();
+};
+
+NS_IMPL_ISUPPORTS1(XMLHttpRequestAuthPrompt, nsIAuthPrompt)
+
+XMLHttpRequestAuthPrompt::XMLHttpRequestAuthPrompt()
+{
+  MOZ_COUNT_CTOR(XMLHttpRequestAuthPrompt);
+}
+
+XMLHttpRequestAuthPrompt::~XMLHttpRequestAuthPrompt()
+{
+  MOZ_COUNT_DTOR(XMLHttpRequestAuthPrompt);
+}
+
+NS_IMETHODIMP
+XMLHttpRequestAuthPrompt::Prompt(const PRUnichar* aDialogTitle,
+                                 const PRUnichar* aText,
+                                 const PRUnichar* aPasswordRealm,
+                                 uint32_t aSavePassword,
+                                 const PRUnichar* aDefaultText,
+                                 PRUnichar** aResult,
+                                 bool* aRetval)
+{
+  *aRetval = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+XMLHttpRequestAuthPrompt::PromptUsernameAndPassword(const PRUnichar* aDialogTitle,
+                                                    const PRUnichar* aDialogText,
+                                                    const PRUnichar* aPasswordRealm,
+                                                    uint32_t aSavePassword,
+                                                    PRUnichar** aUser,
+                                                    PRUnichar** aPwd,
+                                                    bool* aRetval)
+{
+  *aRetval = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+XMLHttpRequestAuthPrompt::PromptPassword(const PRUnichar* aDialogTitle,
+                                         const PRUnichar* aText,
+                                         const PRUnichar* aPasswordRealm,
+                                         uint32_t aSavePassword,
+                                         PRUnichar** aPwd,
+                                         bool* aRetval)
+{
+  *aRetval = false;
+  return NS_OK;
+}
+
 /////////////////////////////////////////////
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXHREventTarget)
@@ -529,7 +593,8 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsXMLHttpRequest)
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsXMLHttpRequest)
-  return tmp->IsBlack();
+  return tmp->
+    IsBlackAndDoesNotNeedTracing(static_cast<nsDOMEventTargetHelper*>(tmp));
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsXMLHttpRequest)
@@ -1554,7 +1619,7 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
   }
 
   progress->InitProgressEvent(aType, false, false, aLengthComputable,
-                              aLoaded, (aTotal == LL_MAXUINT) ? 0 : aTotal);
+                              aLoaded, (aTotal == UINT64_MAX) ? 0 : aTotal);
 
   if (aUseLSEventWrapper) {
     nsCOMPtr<nsIDOMProgressEvent> xhrprogressEvent =
@@ -2443,7 +2508,7 @@ GetRequestBody(nsIDOMDocument* aDoc, nsIInputStream** aResult,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIStorageStream> storStream;
-  rv = NS_NewStorageStream(4096, PR_UINT32_MAX, getter_AddRefs(storStream));
+  rv = NS_NewStorageStream(4096, UINT32_MAX, getter_AddRefs(storStream));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIOutputStream> output;
@@ -3656,7 +3721,7 @@ nsXMLHttpRequest::OnProgress(nsIRequest *aRequest, nsISupports *aContext, uint64
   bool upload = !!((XML_HTTP_REQUEST_OPENED | XML_HTTP_REQUEST_SENT) & mState);
   // When uploading, OnProgress reports also headers in aProgress and aProgressMax.
   // So, try to remove the headers, if possible.
-  bool lengthComputable = (aProgressMax != LL_MAXUINT);
+  bool lengthComputable = (aProgressMax != UINT64_MAX);
   if (upload) {
     uint64_t loaded = aProgress;
     uint64_t total = aProgressMax;
@@ -3750,6 +3815,57 @@ nsXMLHttpRequest::GetInterface(const nsIID & aIID, void **aResult)
   }
   else if (aIID.Equals(NS_GET_IID(nsIAuthPrompt)) ||
            aIID.Equals(NS_GET_IID(nsIAuthPrompt2))) {
+
+    nsCOMPtr<nsIURI> uri;
+    rv = mChannel->GetURI(getter_AddRefs(uri));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Verify that it's ok to prompt for credentials here, per spec
+    // http://xhr.spec.whatwg.org/#the-send%28%29-method
+    bool showPrompt = true;
+
+    // If authentication fails, XMLHttpRequest origin and
+    // the request URL are same origin, ...
+    if (mState & XML_HTTP_REQUEST_USE_XSITE_AC) {
+      showPrompt = false;
+    }
+
+    // ... Authorization is not in the list of author request headers, ...
+    if (showPrompt) {
+      for (uint32_t i = 0, len = mModifiedRequestHeaders.Length(); i < len; ++i) {
+        if (mModifiedRequestHeaders[i].header.
+              LowerCaseEqualsLiteral("authorization")) {
+          showPrompt = false;
+          break;
+        }
+      }
+    }
+
+    // ... request username is null, and request password is null,
+    if (showPrompt) {
+
+      nsCString username;
+      rv = uri->GetUsername(username);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsCString password;
+      rv = uri->GetPassword(password);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      if (!username.IsEmpty() || !password.IsEmpty()) {
+        showPrompt = false;
+      }
+    }
+
+    // ... user agents should prompt the end user for their username and password.
+    if (!showPrompt) {
+      nsRefPtr<XMLHttpRequestAuthPrompt> prompt = new XMLHttpRequestAuthPrompt();
+      if (!prompt)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+      return prompt->QueryInterface(aIID, aResult);
+    }
+
     nsCOMPtr<nsIPromptFactory> wwatch =
       do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);

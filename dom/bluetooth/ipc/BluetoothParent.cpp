@@ -213,6 +213,14 @@ BluetoothParent::RecvPBluetoothRequestConstructor(
       return actor->DoRequest(aRequest.get_DenyPairingConfirmationRequest());
     case Request::TDenyAuthorizationRequest:
       return actor->DoRequest(aRequest.get_DenyAuthorizationRequest());
+    case Request::TConnectRequest:
+      return actor->DoRequest(aRequest.get_ConnectRequest());
+    case Request::TDisconnectRequest:
+      return actor->DoRequest(aRequest.get_DisconnectRequest());
+    case Request::TSendFileRequest:
+      return actor->DoRequest(aRequest.get_SendFileRequest());
+    case Request::TStopSendingFileRequest:
+      return actor->DoRequest(aRequest.get_StopSendingFileRequest());
     default:
       MOZ_NOT_REACHED("Unknown type!");
       return false;
@@ -485,4 +493,50 @@ BluetoothRequestParent::DoRequest(const DenyAuthorizationRequest& aRequest)
   NS_ENSURE_TRUE(result, false);
 
   return true;
+}
+
+bool
+BluetoothRequestParent::DoRequest(const ConnectRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TConnectRequest);
+
+  return mService->Connect(aRequest.address(),
+                           aRequest.adapterPath(),
+                           aRequest.profileId(),
+                           mReplyRunnable.get());
+}
+
+bool
+BluetoothRequestParent::DoRequest(const DisconnectRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TDisconnectRequest);
+
+  mService->Disconnect(aRequest.profileId(),
+                       mReplyRunnable.get());
+
+  return true;
+}
+
+bool
+BluetoothRequestParent::DoRequest(const SendFileRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TSendFileRequest);
+
+  return mService->SendFile(aRequest.devicePath(),
+                            (BlobParent*)aRequest.blobParent(),
+                            (BlobChild*)aRequest.blobChild(),
+                            mReplyRunnable.get());
+}
+
+bool
+BluetoothRequestParent::DoRequest(const StopSendingFileRequest& aRequest)
+{
+  MOZ_ASSERT(mService);
+  MOZ_ASSERT(mRequestType == Request::TStopSendingFileRequest);
+
+  return mService->StopSendingFile(aRequest.devicePath(),
+                                   mReplyRunnable.get());
 }

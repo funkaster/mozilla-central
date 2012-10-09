@@ -100,19 +100,6 @@ js::TraceCycleDetectionSet(JSTracer *trc, js::ObjectSet &set)
     }
 }
 
-struct CallbackData
-{
-    CallbackData(JSMallocSizeOfFun f) : mallocSizeOf(f), n(0) {}
-    JSMallocSizeOfFun mallocSizeOf;
-    size_t n;
-};
-
-void CompartmentCallback(JSRuntime *rt, void *vdata, JSCompartment *compartment)
-{
-    CallbackData *data = (CallbackData *) vdata;
-    data->n += data->mallocSizeOf(compartment);
-}
-
 void
 JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtSizes)
 {
@@ -147,11 +134,6 @@ JSRuntime::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, RuntimeSizes *rtS
     rtSizes->scriptFilenames = scriptFilenameTable.sizeOfExcludingThis(mallocSizeOf);
     for (ScriptFilenameTable::Range r = scriptFilenameTable.all(); !r.empty(); r.popFront())
         rtSizes->scriptFilenames += mallocSizeOf(r.front());
-
-    rtSizes->compartmentObjects = 0;
-    CallbackData data(mallocSizeOf);
-    JS_IterateCompartments(this, &data, CompartmentCallback);
-    rtSizes->compartmentObjects = data.n;
 }
 
 size_t
@@ -307,15 +289,15 @@ JSRuntime::getSelfHostedFunction(JSContext *cx, const char *name)
     JSAtom *atom = Atomize(cx, name, strlen(name));
     if (!atom)
         return NULL;
-    Value funVal = NullValue();
-    JSAutoByteString bytes;
-    if (!cloneSelfHostedValueById(cx, AtomToId(atom), holder, &funVal))
+    RootedId id(cx, AtomToId(atom));
+    RootedValue funVal(cx, NullValue());
+    if (!cloneSelfHostedValueById(cx, id, holder, &funVal))
         return NULL;
     return funVal.toObject().toFunction();
 }
 
 bool
-JSRuntime::cloneSelfHostedValueById(JSContext *cx, jsid id, HandleObject holder, Value *vp)
+JSRuntime::cloneSelfHostedValueById(JSContext *cx, HandleId id, HandleObject holder, MutableHandleValue vp)
 {
     Value funVal;
     {
@@ -331,14 +313,14 @@ JSRuntime::cloneSelfHostedValueById(JSContext *cx, jsid id, HandleObject holder,
      * initializing the runtime (see JSRuntime::initSelfHosting).
      */
     if (cx->global() == selfHostedGlobal_) {
-        *vp = ObjectValue(funVal.toObject());
+        vp.set(ObjectValue(funVal.toObject()));
     } else {
-        RootedObject clone(cx, JS_CloneFunctionObject(cx, &funVal.toObject(), cx->global()));
+        RootedObject clone(cx, JS_CloneFunctionObject(cx,  &funVal.toObject(), cx->global()));
         if (!clone)
             return false;
-        *vp = ObjectValue(*clone);
+        vp.set(ObjectValue(*clone));
     }
-    DebugOnly<bool> ok = JS_DefinePropertyById(cx, holder, id, *vp, NULL, NULL, 0);
+    DebugOnly<bool> ok = JS_DefinePropertyById(cx, holder, id, vp, NULL, NULL, 0);
     JS_ASSERT(ok);
     return true;
 }
@@ -998,11 +980,6 @@ js_ReportErrorAgain(JSContext *cx, const char *message, JSErrorReport *reportp)
     if (!message)
         return;
 
-    if (cx->lastMessage)
-        js_free(cx->lastMessage);
-    cx->lastMessage = JS_strdup(cx, message);
-    if (!cx->lastMessage)
-        return;
     onError = cx->errorReporter;
 
     /*
@@ -1011,11 +988,11 @@ js_ReportErrorAgain(JSContext *cx, const char *message, JSErrorReport *reportp)
      */
     if (onError) {
         JSDebugErrorHook hook = cx->runtime->debugHooks.debugErrorHook;
-        if (hook && !hook(cx, cx->lastMessage, reportp, cx->runtime->debugHooks.debugErrorHookData))
+        if (hook && !hook(cx, message, reportp, cx->runtime->debugHooks.debugErrorHookData))
             onError = NULL;
     }
     if (onError)
-        onError(cx, cx->lastMessage, reportp);
+        onError(cx, message, reportp);
 }
 
 void
@@ -1213,7 +1190,6 @@ JSContext::JSContext(JSRuntime *rt)
     stack(thisDuringConstruction()),
     parseMapPool_(NULL),
     cycleDetectorSet(thisDuringConstruction()),
-    lastMessage(NULL),
     errorReporter(NULL),
     operationCallback(NULL),
     data(NULL),
@@ -1251,9 +1227,6 @@ JSContext::~JSContext()
     /* Free the stuff hanging off of cx. */
     if (parseMapPool_)
         js_delete(parseMapPool_);
-
-    if (lastMessage)
-        js_free(lastMessage);
 
     JS_ASSERT(!resolvingList);
 }

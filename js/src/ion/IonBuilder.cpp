@@ -745,7 +745,7 @@ IonBuilder::markPhiBytecodeUses(jsbytecode *pc)
 {
     unsigned nuses = analyze::GetUseCount(script_, pc - script_->code);
     for (unsigned i = 0; i < nuses; i++) {
-        MDefinition *def = current->peek(-(i + 1));
+        MDefinition *def = current->peek(-int32_t(i + 1));
         if (def->isPassArg())
             def = def->toPassArg()->getArgument();
         if (def->isPhi())
@@ -2885,7 +2885,7 @@ IonBuilder::jsop_call_inline(HandleFunction callee, uint32 argc, bool constructi
 }
 
 bool
-IonBuilder::makeInliningDecision(AutoObjectVector &targets)
+IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32 argc)
 {
     if (inliningDepth >= js_IonOptions.maxInlineDepth)
         return false;
@@ -2898,6 +2898,10 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
     //  2. The cost of inlining (in terms of size expansion of the SSA graph),
     //     and size expansion of the ultimately generated code, will be
     //     less significant.
+    //  3. Do not inline functions which are not called as frequently as their
+    //     callers.
+
+    uint32_t callerUses = script_->getUseCount();
 
     uint32_t totalSize = 0;
     uint32_t checkUses = js_IonOptions.usesBeforeInlining;
@@ -2908,12 +2912,24 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
             return false;
 
         JSScript *script = target->script();
+        uint32_t calleeUses = script->getUseCount();
+
+        if (target->nargs < argc) {
+            IonSpew(IonSpew_Inlining, "Not inlining, overflow of arguments.");
+            return false;
+        }
+
         totalSize += script->length;
         if (totalSize > js_IonOptions.inlineMaxTotalBytecodeLength)
             return false;
 
         if (script->length > js_IonOptions.smallFunctionMaxBytecodeLength)
             allFunctionsAreSmall = false;
+
+        if (calleeUses * js_IonOptions.inlineUseCountRatio < callerUses) {
+            IonSpew(IonSpew_Inlining, "Not inlining, callee is not hot");
+            return false;
+        }
     }
     if (allFunctionsAreSmall)
         checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
@@ -3676,41 +3692,6 @@ IonBuilder::jsop_funapply(uint32 argc)
     return pushTypeBarrier(apply, types, barrier);
 }
 
-// Get the builtin RegExp.prototype.test function.
-static bool
-GetBuiltinRegExpTest(JSContext *cx, JSScript *script, JSFunction **result)
-{
-    JS_ASSERT(*result == NULL);
-
-    // Get the builtin RegExp.prototype object.
-    RootedObject proto(cx, script->global().getOrCreateRegExpPrototype(cx));
-    if (!proto)
-        return false;
-
-    // Get the |test| property. Note that we use lookupProperty, not getProperty,
-    // to avoid calling a getter.
-    RootedShape shape(cx);
-    RootedObject holder(cx);
-    if (!JSObject::lookupProperty(cx, proto, cx->names().test, &holder, &shape))
-        return false;
-
-    if (proto != holder || !shape || !shape->hasDefaultGetter() || !shape->hasSlot())
-        return true;
-
-    // The RegExp.prototype.test property is writable, so we have to ensure
-    // we got the builtin function.
-    Value val = holder->getSlot(shape->slot());
-    if (!val.isObject())
-        return true;
-
-    JSObject *obj = &val.toObject();
-    if (!obj->isFunction() || obj->toFunction()->maybeNative() != regexp_test)
-        return true;
-
-    *result = obj->toFunction();
-    return true;
-}
-
 bool
 IonBuilder::jsop_call(uint32 argc, bool constructing)
 {
@@ -3735,24 +3716,13 @@ IonBuilder::jsop_call(uint32 argc, bool constructing)
             }
         }
 
-        if (numTargets > 0 && makeInliningDecision(targets))
+        if (numTargets > 0 && makeInliningDecision(targets, argc))
             return inlineScriptedCall(targets, argc, constructing, types, barrier);
     }
 
     RootedFunction target(cx, NULL);
-    if (numTargets == 1) {
+    if (numTargets == 1)
         target = targets[0]->toFunction();
-
-        // Call RegExp.test instead of RegExp.exec if the result will not be used
-        // or will only be used to test for existence.
-        if (target->maybeNative() == regexp_exec && !CallResultEscapes(pc)) {
-            JSFunction *newTarget = NULL;
-            if (!GetBuiltinRegExpTest(cx, script_, &newTarget))
-                return false;
-            if (newTarget)
-                target = newTarget;
-        }
-    }
 
     return makeCallBarrier(target, argc, constructing, types, barrier);
 }
@@ -4614,8 +4584,12 @@ IonBuilder::pushTypeBarrier(MInstruction *ins, types::StackTypeSet *actual,
 // Test the type of values returned by a VM call. This is an optimized version
 // of calling TypeScript::Monitor inside such stubs.
 void
-IonBuilder::monitorResult(MInstruction *ins, types::TypeSet *types)
+IonBuilder::monitorResult(MInstruction *ins, types::TypeSet *barrier, types::TypeSet *types)
 {
+    // MonitorTypes is redundant if we will also add a type barrier.
+    if (barrier)
+        return;
+
     if (!types || types->unknown())
         return;
 
@@ -4801,7 +4775,7 @@ IonBuilder::jsop_getname(HandlePropertyName name)
     types::StackTypeSet *barrier = oracle->propertyReadBarrier(script_, pc);
     types::StackTypeSet *types = oracle->propertyRead(script_, pc);
 
-    monitorResult(ins, types);
+    monitorResult(ins, barrier, types);
     return pushTypeBarrier(ins, types, barrier);
 }
 
@@ -4867,7 +4841,7 @@ IonBuilder::jsop_getelem()
     types::StackTypeSet *types = oracle->propertyRead(script_, pc);
 
     if (mustMonitorResult)
-        monitorResult(ins, types);
+        monitorResult(ins, barrier, types);
     return pushTypeBarrier(ins, types, barrier);
 }
 
@@ -5914,11 +5888,15 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
         return makeCallBarrier(getter, 0, false, types, barrier);
     }
 
-    if (unary.ival == MIRType_Object) {
-        MIRType rvalType = MIRType_Value;
-        if (!barrier && !IsNullOrUndefined(unary.rval))
-            rvalType = unary.rval;
+    // If the input is guaranteed to be an object, then we want
+    // to specialize it via a slot load or an IC.
 
+    bool accessGetter = oracle->propertyReadAccessGetter(script_, pc);
+    MIRType rvalType = unary.rval;
+    if (barrier || IsNullOrUndefined(unary.rval) || accessGetter)
+        rvalType = MIRType_Value;
+
+    if (unary.ival == MIRType_Object) {
         Shape *objShape;
         if ((objShape = mjit::GetPICSingleShape(cx, script_, pc, info().constructing())) &&
             !objShape->inDictionary())
@@ -5954,11 +5932,30 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
                 load->setIdempotent();
         }
 
-        ins = load;
         if (JSOp(*pc) == JSOP_CALLPROP) {
             if (!annotateGetPropertyCache(cx, obj, load, unaryTypes.inTypes, types))
                 return false;
         }
+
+        // If the cache is known to access getters, then enable generation of
+        // getter stubs and set its result type to value.
+        if (accessGetter)
+            load->setAllowGetters();
+
+        ins = load;
+    } else if (obj->type() == MIRType_Value && unaryTypes.inTypes->objectOrSentinel()) {
+        // Fallibly unwrap the object and IC the result.
+        MUnbox *unbox = MUnbox::New(obj, MIRType_Object, MUnbox::Fallible);
+        current->add(unbox);
+
+        spew("GETPROP is object-or-sentinel");
+
+        MGetPropertyCache *load = MGetPropertyCache::New(unbox, name);
+        load->setResultType(rvalType);
+        if (accessGetter)
+            load->setAllowGetters();
+
+        ins = load;
     } else {
         ins = MCallGetProperty::New(obj, name);
     }
@@ -5969,8 +5966,8 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
     if (ins->isEffectful() && !resumeAfter(ins))
         return false;
 
-    if (ins->isCallGetProperty())
-        monitorResult(ins, types);
+    if (ins->isCallGetProperty() || accessGetter)
+        monitorResult(ins, barrier, types);
     return pushTypeBarrier(ins, types, barrier);
 }
 

@@ -25,6 +25,7 @@
     _(NewObject)                    \
     _(NewSlots)                     \
     _(NewCallObject)                \
+    _(NewStringObject)              \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(RecompileCheck)               \
@@ -69,6 +70,7 @@
     _(SqrtD)                        \
     _(PowI)                         \
     _(PowD)                         \
+    _(Random)                       \
     _(MathFunctionD)                \
     _(NotI)                         \
     _(NotD)                         \
@@ -93,6 +95,7 @@
     _(OsrValue)                     \
     _(OsrScopeChain)                \
     _(RegExp)                       \
+    _(RegExpTest)                   \
     _(Lambda)                       \
     _(LambdaForSingleton)           \
     _(ImplicitThis)                 \
@@ -120,6 +123,7 @@
     _(ArrayPopShiftT)               \
     _(ArrayPushV)                   \
     _(ArrayPushT)                   \
+    _(ArrayConcat)                  \
     _(StoreElementHoleV)            \
     _(StoreElementHoleT)            \
     _(LoadTypedArrayElement)        \
