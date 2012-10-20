@@ -175,7 +175,7 @@ BluetoothServiceChildProcess::GetDevicePath(const nsAString& aAdapterPath,
 
   aDevicePath = path;
 
-  return NS_OK;
+  return true;
 }
 
 nsresult
@@ -343,6 +343,22 @@ BluetoothServiceChildProcess::StopSendingFile(
   SendRequest(aRunnable,
               StopSendingFileRequest(nsString(aDeviceAddress)));
   return true;
+}
+
+void
+BluetoothServiceChildProcess::ConfirmReceivingFile(
+  const nsAString& aDeviceAddress,
+  bool aConfirm,
+  BluetoothReplyRunnable* aRunnable)
+{
+  if(aConfirm) {
+    SendRequest(aRunnable,
+                ConfirmReceivingFileRequest(nsString(aDeviceAddress)));
+    return;
+  }
+  
+  SendRequest(aRunnable,
+              DenyReceivingFileRequest(nsString(aDeviceAddress)));
 }
 
 nsresult

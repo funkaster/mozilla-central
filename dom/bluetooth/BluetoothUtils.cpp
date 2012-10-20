@@ -18,93 +18,6 @@
 
 USING_BLUETOOTH_NAMESPACE
 
-nsresult
-mozilla::dom::bluetooth::StringArrayToJSArray(JSContext* aCx, JSObject* aGlobal,
-                                              const nsTArray<nsString>& aSourceArray,
-                                              JSObject** aResultArray)
-{
-  NS_ASSERTION(aCx, "Null context!");
-  NS_ASSERTION(aGlobal, "Null global!");
-
-  JSAutoRequest ar(aCx);
-  JSAutoCompartment ac(aCx, aGlobal);
-
-  JSObject* arrayObj;
-
-  if (aSourceArray.IsEmpty()) {
-    arrayObj = JS_NewArrayObject(aCx, 0, nullptr);
-  } else {
-    uint32_t valLength = aSourceArray.Length();
-    mozilla::ScopedDeleteArray<jsval> valArray(new jsval[valLength]);
-    JS::AutoArrayRooter tvr(aCx, 0, valArray);
-    for (uint32_t index = 0; index < valLength; index++) {
-      JSString* s = JS_NewUCStringCopyN(aCx, aSourceArray[index].BeginReading(),
-                                        aSourceArray[index].Length());
-      if(!s) {
-        NS_WARNING("Memory allocation error!");
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
-      valArray[index] = STRING_TO_JSVAL(s);
-      tvr.changeLength(index + 1);
-    }
-    arrayObj = JS_NewArrayObject(aCx, valLength, valArray);
-  }
-
-  if (!arrayObj) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  // XXX This is not what Jonas wants. He wants it to be live.
-  // Followup at bug 717414
-  if (!JS_FreezeObject(aCx, arrayObj)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  *aResultArray = arrayObj;
-  return NS_OK;
-}
-
-nsresult
-mozilla::dom::bluetooth::BluetoothDeviceArrayToJSArray(JSContext* aCx, JSObject* aGlobal,
-                                                       const nsTArray<nsRefPtr<BluetoothDevice> >& aSourceArray,
-                                                       JSObject** aResultArray)
-{
-  NS_ASSERTION(aCx, "Null context!");
-  NS_ASSERTION(aGlobal, "Null global!");
-
-  JSAutoRequest ar(aCx);
-  JSAutoCompartment ac(aCx, aGlobal);
-
-  JSObject* arrayObj;
-
-  if (aSourceArray.IsEmpty()) {
-    arrayObj = JS_NewArrayObject(aCx, 0, nullptr);
-  } else {
-    uint32_t valLength = aSourceArray.Length();
-    mozilla::ScopedDeleteArray<jsval> valArray(new jsval[valLength]);
-    JS::AutoArrayRooter tvr(aCx, 0, valArray);
-    for (uint32_t index = 0; index < valLength; index++) {
-      nsISupports* obj = aSourceArray[index]->ToISupports();
-      nsresult rv =
-        nsContentUtils::WrapNative(aCx, aGlobal, obj, &valArray[index]);
-      NS_ENSURE_SUCCESS(rv, rv);
-      tvr.changeLength(index + 1);
-    }
-    arrayObj = JS_NewArrayObject(aCx, valLength, valArray);
-  }
-
-  if (!arrayObj) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  if (!JS_FreezeObject(aCx, arrayObj)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  *aResultArray = arrayObj;
-  return NS_OK;
-}
-
 bool
 mozilla::dom::bluetooth::SetJsObject(JSContext* aContext,
                                      JSObject* aObj,
@@ -117,7 +30,7 @@ mozilla::dom::bluetooth::SetJsObject(JSContext* aContext,
       JSString* JsData = JS_NewStringCopyN(aContext,
                                            NS_ConvertUTF16toUTF8(data).get(),
                                            data.Length());
-      NS_ENSURE_TRUE(JsData, NS_ERROR_OUT_OF_MEMORY);
+      NS_ENSURE_TRUE(JsData, false);
       v = STRING_TO_JSVAL(JsData);
     } else if (aData[i].value().type() == BluetoothValue::Tuint32_t) {
       int data = aData[i].value().get_uint32_t();

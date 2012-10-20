@@ -11,6 +11,7 @@ var Cu = Components.utils;
 
 Components.utils.import("resource://specialpowers/MockFilePicker.jsm");
 Components.utils.import("resource://gre/modules/Services.jsm");
+Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 function SpecialPowersAPI() { 
   this._consoleListeners = [];
@@ -511,7 +512,7 @@ SpecialPowersAPI.prototype = {
     var pref_string = [];
     pref_string[prefs.PREF_INT] = "INT";
     pref_string[prefs.PREF_BOOL] = "BOOL";
-    pref_string[prefs.PREF_STRING] = "STRING";
+    pref_string[prefs.PREF_STRING] = "CHAR";
 
     var pendingActions = [];
     var cleanupActions = [];
@@ -1241,5 +1242,9 @@ SpecialPowersAPI.prototype = {
 
   getMozFullPath: function(file) {
     return file.mozFullPath;
+  },
+
+  isWindowPrivate: function(win) {
+    return PrivateBrowsingUtils.isWindowPrivate(win);
   },
 };

@@ -12,7 +12,7 @@ import time
 class DeviceManagerADB(DeviceManager):
 
     def __init__(self, host=None, port=20701, retrylimit=5, packageName='fennec',
-                 adbPath='adb', deviceSerial=None, deviceRoot=None):
+                 adbPath='adb', deviceSerial=None, deviceRoot=None, **kwargs):
         self.host = host
         self.port = port
         self.retrylimit = retrylimit
@@ -160,36 +160,32 @@ class DeviceManagerADB(DeviceManager):
         """
         Copies localname from the host to destname on the device
         """
-        try:
-            if (os.name == "nt"):
-                destname = destname.replace('\\', '/')
-            if (self.useRunAs):
-                remoteTmpFile = self.getTempDir() + "/" + os.path.basename(localname)
-                self._checkCmd(["push", os.path.realpath(localname), remoteTmpFile])
-                if self.useDDCopy:
-                    self._checkCmdAs(["shell", "dd", "if=" + remoteTmpFile, "of=" + destname])
-                else:
-                    self._checkCmdAs(["shell", "cp", remoteTmpFile, destname])
-                self._checkCmd(["shell", "rm", remoteTmpFile])
+        # you might expect us to put the file *in* the directory in this case,
+        # but that would be different behaviour from devicemanagerSUT. Throw
+        # an exception so we have the same behaviour between the two
+        # implementations
+        if self.dirExists(destname):
+            raise DMError("Attempted to push a file (%s) to a directory (%s)!" %
+                          (localname, destname))
+
+        if self.useRunAs:
+            remoteTmpFile = self.getTempDir() + "/" + os.path.basename(localname)
+            self._checkCmd(["push", os.path.realpath(localname), remoteTmpFile])
+            if self.useDDCopy:
+                self.shellCheckOutput(["dd", "if=" + remoteTmpFile, "of=" + destname])
             else:
-                self._checkCmd(["push", os.path.realpath(localname), destname])
-            if (self.dirExists(destname)):
-                destname = destname + "/" + os.path.basename(localname)
-            return True
-        except:
-            raise DMError("Error pushing file to device")
+                self.shellCheckOutput(["cp", remoteTmpFile, destname])
+            self.shellCheckOutput(["rm", remoteTmpFile])
+        else:
+            self._checkCmd(["push", os.path.realpath(localname), destname])
 
     def mkDir(self, name):
         """
         Creates a single directory on the device file system
         """
-        try:
-            result = self._runCmdAs(["shell", "mkdir", name]).stdout.read()
-            if 'read-only file system' in result.lower():
-                raise DMError("Error creating directory: read only file system")
-            # otherwise assume success
-        except:
-            raise DMError("Error creating directory")
+        result = self._runCmdAs(["shell", "mkdir", name]).stdout.read()
+        if 'read-only file system' in result.lower():
+            raise DMError("Error creating directory: read only file system")
 
     def pushDir(self, localDir, remoteDir):
         """
@@ -199,40 +195,39 @@ class DeviceManagerADB(DeviceManager):
         # contains symbolic links, the links are pushed, rather than the linked
         # files; we either zip/unzip or push file-by-file to get around this
         # limitation
-        if (not self.dirExists(remoteDir)):
+        if not self.dirExists(remoteDir):
             self.mkDirs(remoteDir+"/x")
-            if (self.useZip):
-                try:
-                    localZip = tempfile.mktemp()+".zip"
-                    remoteZip = remoteDir + "/adbdmtmp.zip"
-                    subprocess.check_output(["zip", "-r", localZip, '.'], cwd=localDir)
-                    self.pushFile(localZip, remoteZip)
-                    os.remove(localZip)
-                    data = self._runCmdAs(["shell", "unzip", "-o", remoteZip, "-d", remoteDir]).stdout.read()
-                    self._checkCmdAs(["shell", "rm", remoteZip])
-                    if (re.search("unzip: exiting", data) or re.search("Operation not permitted", data)):
-                        raise Exception("unzip failed, or permissions error")
-                except:
-                    print "zip/unzip failure: falling back to normal push"
-                    self.useZip = False
-                    self.pushDir(localDir, remoteDir)
-            else:
-                for root, dirs, files in os.walk(localDir, followlinks=True):
-                    relRoot = os.path.relpath(root, localDir)
-                    for f in files:
-                        localFile = os.path.join(root, f)
-                        remoteFile = remoteDir + "/"
-                        if (relRoot!="."):
-                            remoteFile = remoteFile + relRoot + "/"
-                        remoteFile = remoteFile + f
-                        self.pushFile(localFile, remoteFile)
-                    for d in dirs:
-                        targetDir = remoteDir + "/"
-                        if (relRoot!="."):
-                            targetDir = targetDir + relRoot + "/"
-                        targetDir = targetDir + d
-                        if (not self.dirExists(targetDir)):
-                            self.mkDir(targetDir)
+        if self.useZip:
+            try:
+                localZip = tempfile.mktemp() + ".zip"
+                remoteZip = remoteDir + "/adbdmtmp.zip"
+                subprocess.check_output(["zip", "-r", localZip, '.'], cwd=localDir)
+                self.pushFile(localZip, remoteZip)
+                os.remove(localZip)
+                data = self._runCmdAs(["shell", "unzip", "-o", remoteZip, "-d", remoteDir]).stdout.read()
+                self._checkCmdAs(["shell", "rm", remoteZip])
+                if re.search("unzip: exiting", data) or re.search("Operation not permitted", data):
+                    raise Exception("unzip failed, or permissions error")
+            except:
+                print "zip/unzip failure: falling back to normal push"
+                self.useZip = False
+                self.pushDir(localDir, remoteDir)
+        else:
+            for root, dirs, files in os.walk(localDir, followlinks=True):
+                relRoot = os.path.relpath(root, localDir)
+                for f in files:
+                    localFile = os.path.join(root, f)
+                    remoteFile = remoteDir + "/"
+                    if relRoot != ".":
+                        remoteFile = remoteFile + relRoot + "/"
+                    remoteFile = remoteFile + f
+                    self.pushFile(localFile, remoteFile)
+                for d in dirs:
+                    targetDir = remoteDir + "/"
+                    if relRoot != ".":
+                        targetDir = targetDir + relRoot + "/"
+                    targetDir = targetDir + d
+                    self.mkDir(targetDir)
 
     def dirExists(self, remotePath):
         """
@@ -324,7 +319,7 @@ class DeviceManagerADB(DeviceManager):
         ret = []
         while (proc):
             els = proc.split()
-            ret.append(list([els[1], els[len(els) - 1], els[0]]))
+            ret.append(list([int(els[1]), els[len(els) - 1], els[0]]))
             proc =  p.stdout.readline()
         return ret
 
@@ -503,8 +498,11 @@ class DeviceManagerADB(DeviceManager):
         # if self.deviceRoot is already set, create it if necessary, and use it
         if self.deviceRoot:
             if not self.dirExists(self.deviceRoot):
-                if not self.mkDir(self.deviceRoot):
-                    raise DMError("Unable to create device root %s" % self.deviceRoot)
+                try:
+                    self.mkDir(self.deviceRoot)
+                except:
+                    print "Unable to create device root %s" % self.deviceRoot
+                    raise
             return
 
         # /mnt/sdcard/tests is preferred to /data/local/tests, but this can be
@@ -514,16 +512,20 @@ class DeviceManagerADB(DeviceManager):
             self.deviceRoot = testRoot
             return
 
-        for (basePath, subPath) in [('/mnt/sdcard', 'tests'),
-                                    ('/data/local', 'tests')]:
+        paths = [('/mnt/sdcard', 'tests'),
+                 ('/data/local', 'tests')]
+        for (basePath, subPath) in paths:
             if self.dirExists(basePath):
                 testRoot = os.path.join(basePath, subPath)
-                if self.mkDir(testRoot):
+                try:
+                    self.mkDir(testRoot)
                     self.deviceRoot = testRoot
                     return
+                except:
+                    pass
 
-        raise DMError("Unable to set up device root as /mnt/sdcard/tests "
-                                    "or /data/local/tests")
+        raise DMError("Unable to set up device root using paths: [%s]"
+                        % ", ".join(["'%s'" % os.path.join(b, s) for b, s in paths]))
 
     def getDeviceRoot(self):
         """
@@ -551,10 +553,9 @@ class DeviceManagerADB(DeviceManager):
         """
         # Cache result to speed up operations depending
         # on the temporary directory.
-        if self.tempDir == None:
+        if not self.tempDir:
             self.tempDir = self.getDeviceRoot() + "/tmp"
-            if (not self.dirExists(self.tempDir)):
-                return self.mkDir(self.tempDir)
+            self.mkDir(self.tempDir)
 
         return self.tempDir
 

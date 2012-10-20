@@ -63,6 +63,7 @@
 #include "gc/Marking.h"
 #include "gc/Memory.h"
 #include "js/MemoryMetrics.h"
+#include "vm/Debugger.h"
 #include "vm/NumericConversions.h"
 #include "vm/StringBuffer.h"
 #include "vm/Xdr.h"
@@ -349,7 +350,7 @@ JS_ConvertArgumentsVA(JSContext *cx, unsigned argc, jsval *argv, const char *for
                 JSStableString *stable = str->ensureStable(cx);
                 if (!stable)
                     return JS_FALSE;
-                *va_arg(ap, const jschar **) = stable->chars();
+                *va_arg(ap, const jschar **) = stable->chars().get();
             } else {
                 *va_arg(ap, JSString **) = str;
             }
@@ -715,7 +716,7 @@ JS_FRIEND_API(bool) NeedRelaxedRootChecks() { return false; }
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
-JSRuntime::JSRuntime()
+JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
   : atomsCompartment(NULL),
 #ifdef JS_THREADSAFE
     ownerThread_(NULL),
@@ -829,6 +830,9 @@ JSRuntime::JSRuntime()
     gcLock(NULL),
     gcHelperThread(thisFromCtor()),
 #ifdef JS_THREADSAFE
+#ifdef JS_ION
+    workerThreadState(NULL),
+#endif
     sourceCompressorThread(thisFromCtor()),
 #endif
     defaultFreeOp_(thisFromCtor(), false),
@@ -859,11 +863,13 @@ JSRuntime::JSRuntime()
     ionStackLimit(0),
     ionActivation(NULL),
     ionPcScriptCache(NULL),
-    ionReturnOverride_(MagicValue(JS_ARG_POISON))
+    ionReturnOverride_(MagicValue(JS_ARG_POISON)),
+    useHelperThreads_(useHelperThreads)
 {
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
     JS_INIT_CLIST(&contextList);
     JS_INIT_CLIST(&debuggerList);
+    JS_INIT_CLIST(&onNewGlobalObjectWatchers);
 
     PodZero(&debugHooks);
     PodZero(&atomState);
@@ -928,12 +934,6 @@ JSRuntime::init(uint32_t maxbytes)
         return false;
 
 #ifdef JS_THREADSAFE
-# ifdef JS_ION
-    workerThreadState = this->new_<WorkerThreadState>();
-    if (!workerThreadState || !workerThreadState->init(this))
-        return false;
-# endif
-
     if (!sourceCompressorThread.init())
         return false;
 #endif
@@ -967,7 +967,8 @@ JSRuntime::~JSRuntime()
 
 #ifdef JS_THREADSAFE
 # ifdef JS_ION
-    js_delete(workerThreadState);
+    if (workerThreadState)
+        js_delete(workerThreadState);
 # endif
     sourceCompressorThread.finish();
 #endif
@@ -1060,7 +1061,7 @@ JSRuntime::assertValidThread() const
 #endif  /* JS_THREADSAFE */
 
 JS_PUBLIC_API(JSRuntime *)
-JS_NewRuntime(uint32_t maxbytes)
+JS_NewRuntime(uint32_t maxbytes, JSUseHelperThreads useHelperThreads)
 {
     if (!js_NewRuntimeWasCalled) {
 #ifdef DEBUG
@@ -1098,7 +1099,7 @@ JS_NewRuntime(uint32_t maxbytes)
         js_NewRuntimeWasCalled = JS_TRUE;
     }
 
-    JSRuntime *rt = js_new<JSRuntime>();
+    JSRuntime *rt = js_new<JSRuntime>(useHelperThreads);
     if (!rt)
         return NULL;
 
@@ -1602,6 +1603,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
         AutoCompartment ac(cx, origobj);
         if (!JS_WrapObject(cx, newIdentityWrapper.address()))
             MOZ_CRASH();
+        JS_ASSERT(Wrapper::wrappedObject(newIdentityWrapper) == newIdentity);
         if (!origobj->swap(cx, newIdentityWrapper))
             MOZ_CRASH();
         origobj->compartment()->crossCompartmentWrappers.put(ObjectValue(*newIdentity), origv);
@@ -1691,6 +1693,7 @@ js_TransplantObjectWithWrapper(JSContext *cx,
         RootedObject wrapperGuts(cx, targetobj);
         if (!JS_WrapObject(cx, wrapperGuts.address()))
             MOZ_CRASH();
+        JS_ASSERT(Wrapper::wrappedObject(wrapperGuts) == targetobj);
         if (!origwrapper->swap(cx, wrapperGuts))
             MOZ_CRASH();
         origwrapper->compartment()->crossCompartmentWrappers.put(ObjectValue(*targetobj),
@@ -3381,8 +3384,13 @@ JS_NewGlobalObject(JSContext *cx, JSClass *clasp, JSPrincipals *principals)
 
     JSCompartment *saved = cx->compartment;
     cx->setCompartment(compartment);
-    GlobalObject *global = GlobalObject::create(cx, Valueify(clasp));
+    Rooted<GlobalObject *> global(cx, GlobalObject::create(cx, Valueify(clasp)));
     cx->setCompartment(saved);
+    if (!global)
+        return NULL;
+
+    if (!Debugger::onNewGlobalObject(cx, global))
+        return NULL;
 
     return global;
 }
@@ -5001,6 +5009,16 @@ JS_DefineFunctions(JSContext *cx, JSObject *objArg, JSFunctionSpec *fs)
             fun->setExtendedSlot(0, PrivateValue(fs));
         }
 
+        /*
+         * During creation of the self-hosting global, we ignore all
+         * self-hosted functions, as that means we're currently setting up
+         * the global object that that the self-hosted code is then compiled
+         * in. Self-hosted functions can access each other via their names,
+         * but not via the builtin classes they get installed into.
+         */
+        if (fs->selfHostedName && cx->runtime->isSelfHostedGlobal(cx->global()))
+            return JS_TRUE;
+
         fun = js_DefineFunction(cx, obj, id, fs->call.op, fs->nargs, flags, fs->selfHostedName);
         if (!fun)
             return JS_FALSE;
@@ -5190,7 +5208,7 @@ JS::Compile(JSContext *cx, HandleObject obj, CompileOptions options,
     JS_ASSERT_IF(options.principals, cx->compartment->principals == options.principals);
     AutoLastFrameCheck lfc(cx);
 
-    return frontend::CompileScript(cx, obj, NULL, options, chars, length);
+    return frontend::CompileScript(cx, obj, NULL, options, StableCharPtr(chars, length), length);
 }
 
 JSScript *
@@ -5359,7 +5377,7 @@ JS_BufferIsCompilableUnit(JSContext *cx, JSBool bytes_are_utf8, JSObject *objArg
     {
         CompileOptions options(cx);
         options.setCompileAndGo(false);
-        Parser parser(cx, options, chars, length, /* foldConstants = */ true);
+        Parser parser(cx, options, StableCharPtr(chars, length), length, /* foldConstants = */ true);
         if (parser.init()) {
             older = JS_SetErrorReporter(cx, NULL);
             if (!parser.parse(obj) &&
@@ -5472,7 +5490,7 @@ JS::CompileFunction(JSContext *cx, HandleObject obj, CompileOptions options,
     if (!fun)
         return NULL;
 
-    if (!frontend::CompileFunctionBody(cx, fun, options, formals, chars, length))
+    if (!frontend::CompileFunctionBody(cx, fun, options, formals, StableCharPtr(chars, length), length))
         return NULL;
 
     if (obj && funAtom) {
@@ -5675,7 +5693,8 @@ JS::Evaluate(JSContext *cx, HandleObject obj, CompileOptions options,
 
     options.setCompileAndGo(true);
     options.setNoScriptRval(!rval);
-    RootedScript script(cx, frontend::CompileScript(cx, obj, NULL, options, chars, length));
+    RootedScript script(cx, frontend::CompileScript(cx, obj, NULL, options,
+                                                    StableCharPtr(chars, length), length));
     if (!script)
         return false;
 
@@ -6110,7 +6129,7 @@ JS_GetStringCharsZ(JSContext *cx, JSString *str)
     JSStableString *stable = str->ensureStable(cx);
     if (!stable)
         return NULL;
-    return stable->chars();
+    return stable->chars().get();
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -6124,7 +6143,7 @@ JS_GetStringCharsZAndLength(JSContext *cx, JSString *str, size_t *plength)
     if (!stable)
         return NULL;
     *plength = stable->length();
-    return stable->chars();
+    return stable->chars().get();
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -6138,7 +6157,7 @@ JS_GetStringCharsAndLength(JSContext *cx, JSString *str, size_t *plength)
     if (!stable)
         return NULL;
     *plength = stable->length();
-    return stable->chars();
+    return stable->chars().get();
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -6148,7 +6167,7 @@ JS_GetInternedStringChars(JSString *str)
     JSStableString *stable = str->ensureStable(NULL);
     if (!stable)
         return NULL;
-    return stable->chars();
+    return stable->chars().get();
 }
 
 JS_PUBLIC_API(const jschar *)
@@ -6160,7 +6179,7 @@ JS_GetInternedStringCharsAndLength(JSString *str, size_t *plength)
     if (!stable)
         return NULL;
     *plength = stable->length();
-    return stable->chars();
+    return stable->chars().get();
 }
 
 extern JS_PUBLIC_API(JSFlatString *)
@@ -6181,7 +6200,7 @@ JS_GetFlatStringChars(JSFlatString *str)
     JSStableString *stable = str->ensureStable(NULL);
     if (!stable)
         return NULL;
-    return str->chars();
+    return stable->chars().get();
 }
 
 JS_PUBLIC_API(JSBool)
@@ -6391,7 +6410,7 @@ JS_ParseJSON(JSContext *cx, const jschar *chars, uint32_t len, jsval *vp)
     CHECK_REQUEST(cx);
 
     RootedValue reviver(cx, NullValue()), value(cx);
-    if (!ParseJSONWithReviver(cx, chars, len, reviver, &value))
+    if (!ParseJSONWithReviver(cx, StableCharPtr(chars, len), len, reviver, &value))
         return false;
 
     *vp = value;
@@ -6405,7 +6424,7 @@ JS_ParseJSONWithReviver(JSContext *cx, const jschar *chars, uint32_t len, jsval 
     CHECK_REQUEST(cx);
 
     RootedValue reviver(cx, reviverArg), value(cx);
-    if (!ParseJSONWithReviver(cx, chars, len, reviver, &value))
+    if (!ParseJSONWithReviver(cx, StableCharPtr(chars, len), len, reviver, &value))
         return false;
 
     *vp = value;
@@ -6823,7 +6842,8 @@ JS_NewRegExpObject(JSContext *cx, JSObject *objArg, char *bytes, size_t length, 
         return NULL;
 
     RegExpStatics *res = obj->asGlobal().getRegExpStatics();
-    RegExpObject *reobj = RegExpObject::create(cx, res, chars, length, RegExpFlag(flags), NULL);
+    RegExpObject *reobj = RegExpObject::create(cx, res, StableCharPtr(chars, length), length,
+                                               RegExpFlag(flags), NULL);
     js_free(chars);
     return reobj;
 }
@@ -6835,7 +6855,8 @@ JS_NewUCRegExpObject(JSContext *cx, JSObject *objArg, jschar *chars, size_t leng
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
     RegExpStatics *res = obj->asGlobal().getRegExpStatics();
-    return RegExpObject::create(cx, res, chars, length, RegExpFlag(flags), NULL);
+    return RegExpObject::create(cx, res, StableCharPtr(chars, length), length,
+                                RegExpFlag(flags), NULL);
 }
 
 JS_PUBLIC_API(void)
@@ -6870,8 +6891,8 @@ JS_ExecuteRegExp(JSContext *cx, JSObject *objArg, JSObject *reobjArg, jschar *ch
     CHECK_REQUEST(cx);
 
     RegExpStatics *res = obj->asGlobal().getRegExpStatics();
-    return ExecuteRegExp(cx, res, reobj->asRegExp(), NULL, chars, length,
-                         indexp, test ? RegExpTest : RegExpExec, rval);
+    return ExecuteRegExp(cx, res, reobj->asRegExp(), NullPtr(), StableCharPtr(chars, length),
+                         length, indexp, test ? RegExpTest : RegExpExec, rval);
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -6882,7 +6903,8 @@ JS_NewRegExpObjectNoStatics(JSContext *cx, char *bytes, size_t length, unsigned 
     jschar *chars = InflateString(cx, bytes, &length);
     if (!chars)
         return NULL;
-    RegExpObject *reobj = RegExpObject::createNoStatics(cx, chars, length, RegExpFlag(flags), NULL);
+    RegExpObject *reobj = RegExpObject::createNoStatics(cx, StableCharPtr(chars, length), length,
+                                                        RegExpFlag(flags), NULL);
     js_free(chars);
     return reobj;
 }
@@ -6892,7 +6914,8 @@ JS_NewUCRegExpObjectNoStatics(JSContext *cx, jschar *chars, size_t length, unsig
 {
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
-    return RegExpObject::createNoStatics(cx, chars, length, RegExpFlag(flags), NULL);
+    return RegExpObject::createNoStatics(cx, StableCharPtr(chars, length), length,
+                                         RegExpFlag(flags), NULL);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -6903,8 +6926,8 @@ JS_ExecuteRegExpNoStatics(JSContext *cx, JSObject *objArg, jschar *chars, size_t
     AssertHeapIsIdle(cx);
     CHECK_REQUEST(cx);
 
-    return ExecuteRegExp(cx, NULL, obj->asRegExp(), NULL, chars, length, indexp,
-                         test ? RegExpTest : RegExpExec, rval);
+    return ExecuteRegExp(cx, NULL, obj->asRegExp(), NullPtr(), StableCharPtr(chars, length),
+                         length, indexp, test ? RegExpTest : RegExpExec, rval);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -7203,6 +7226,8 @@ JS_IsIdentifier(JSContext *cx, JSString *str, JSBool *isIdentifier)
 JS_PUBLIC_API(JSBool)
 JS_DescribeScriptedCaller(JSContext *cx, JSScript **script, unsigned *lineno)
 {
+    AutoAssertNoGC nogc;
+
     if (script)
         *script = NULL;
     if (lineno)
@@ -7312,6 +7337,6 @@ JS_GetScriptedGlobal(JSContext *cx)
     ScriptFrameIter i(cx);
     if (i.done())
         return cx->global();
-    return &i.fp()->global();
+    return &i.scopeChain()->global();
 }
 

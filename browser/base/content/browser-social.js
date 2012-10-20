@@ -62,6 +62,7 @@ let SocialUI = {
         break;
       case "social:ambient-notification-changed":
         SocialToolbar.updateButton();
+        SocialMenu.updateMenu();
         break;
       case "social:profile-changed":
         SocialToolbar.updateProfile();
@@ -107,7 +108,7 @@ let SocialUI = {
     // FIXME: bug 772808: menu items don't inherit the "hidden" state properly,
     // need to update them manually.
     // This should just be: toggleCommand.hidden = !Social.active;
-    for (let id of ["appmenu_socialToggle", "menu_socialToggle"]) {
+    for (let id of ["appmenu_socialToggle", "menu_socialToggle", "menu_socialAmbientMenu"]) {
       let el = document.getElementById(id);
       if (!el)
         continue;
@@ -177,6 +178,24 @@ let SocialUI = {
 
   haveLoggedInUser: function SocialUI_haveLoggedInUser() {
     return !!(Social.provider && Social.provider.profile && Social.provider.profile.userName);
+  },
+
+  closeSocialPanelForLinkTraversal: function (target, linkNode) {
+    // No need to close the panel if this traversal was not retargeted
+    if (target == "" || target == "_self")
+      return;
+
+    // Check to see whether this link traversal was in a social panel
+    let win = linkNode.ownerDocument.defaultView;
+    let container = win.QueryInterface(Ci.nsIInterfaceRequestor)
+                                  .getInterface(Ci.nsIWebNavigation)
+                                  .QueryInterface(Ci.nsIDocShell)
+                                  .chromeEventHandler;
+    let containerParent = container.parentNode;
+    if (containerParent.classList.contains("social-panel") &&
+        containerParent instanceof Ci.nsIDOMXULPopupElement) {
+      containerParent.hidePopup();
+    }
   }
 }
 
@@ -584,6 +603,31 @@ let SocialShareButton = {
   }
 };
 
+var SocialMenu = {
+  populate: function SocialMenu_populate() {
+    // This menu is only accessible through keyboard navigation.
+    let submenu = document.getElementById("menu_socialAmbientMenuPopup");
+    while (submenu.hasChildNodes())
+      submenu.removeChild(submenu.firstChild);
+    let provider = Social.provider;
+    if (Social.active && provider) {
+      let iconNames = Object.keys(provider.ambientNotificationIcons);
+      for (let name of iconNames) {
+        let icon = provider.ambientNotificationIcons[name];
+        if (!icon.label || !icon.menuURL)
+          continue;
+        let menuitem = document.createElement("menuitem");
+        menuitem.setAttribute("label", icon.label);
+        menuitem.addEventListener("command", function() {
+          openUILinkIn(icon.menuURL, "tab");
+        }, false);
+        submenu.appendChild(menuitem);
+      }
+    }
+    document.getElementById("menu_socialAmbientMenu").hidden = !submenu.querySelector("menuitem");
+  }
+};
+
 var SocialToolbar = {
   // Called once, after window load, when the Social.provider object is initialized
   init: function SocialToolbar_init() {
@@ -601,7 +645,7 @@ var SocialToolbar = {
     let tbi = document.getElementById("social-toolbar-item");
     tbi.hidden = !Social.uiVisible;
     if (!SocialUI.haveLoggedInUser()) {
-      let parent = document.getElementById("social-notification-box");
+      let parent = document.getElementById("social-notification-panel");
       while (parent.hasChildNodes())
         parent.removeChild(parent.firstChild);
 
@@ -623,7 +667,7 @@ var SocialToolbar = {
     if (profile.userName) {
       notLoggedInLabel.hidden = true;
       userNameBtn.hidden = false;
-      userNameBtn.label = profile.userName;
+      userNameBtn.value = profile.userName;
     } else {
       notLoggedInLabel.hidden = false;
       userNameBtn.hidden = true;
@@ -636,7 +680,6 @@ var SocialToolbar = {
     let icons = provider.ambientNotificationIcons;
     let iconNames = Object.keys(icons);
     let iconBox = document.getElementById("social-toolbar-item");
-    let notifBox = document.getElementById("social-notification-box");
     let panel = document.getElementById("social-notification-panel");
     panel.hidden = false;
 
@@ -717,6 +760,9 @@ var SocialToolbar = {
         let box = document.createElement("box");
         box.classList.add("toolbarbutton-1");
         box.setAttribute("id", iconId);
+        // Use the accessibility menuitem label as tooltiptext.
+        if (icon.label)
+          box.setAttribute("tooltiptext", icon.label);
         box.addEventListener("mousedown", function (e) {
           if (e.button == 0)
             SocialToolbar.showAmbientPopup(box);
@@ -751,7 +797,7 @@ var SocialToolbar = {
       if (image.getAttribute("src") != icon.iconURL)
         image.setAttribute("src", icon.iconURL);
     }
-    notifBox.appendChild(notificationFrames);
+    panel.appendChild(notificationFrames);
     iconBox.appendChild(iconContainers);
 
     for (let frame of createdFrames) {
@@ -768,13 +814,12 @@ var SocialToolbar = {
 
   showAmbientPopup: function SocialToolbar_showAmbientPopup(aToolbarButtonBox) {
     let panel = document.getElementById("social-notification-panel");
-    let notifBox = document.getElementById("social-notification-box");
     let notificationFrameId = aToolbarButtonBox.getAttribute("notificationFrameId");
     let notificationFrame = document.getElementById(notificationFrameId);
 
     // Clear dimensions on all browsers so the panel size will
     // only use the selected browser.
-    let frameIter = notifBox.firstElementChild;
+    let frameIter = panel.firstElementChild;
     while (frameIter) {
       frameIter.collapsed = (frameIter != notificationFrame);
       frameIter = frameIter.nextElementSibling;

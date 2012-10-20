@@ -5,6 +5,7 @@
 
 #include <limits.h>
 
+#include "NSPRFormatTime.h" // must be before anything that includes prtime.h
 #include "nsAboutCacheEntry.h"
 #include "nsICacheService.h"
 #include "nsICacheSession.h"
@@ -12,7 +13,6 @@
 #include "nsNetUtil.h"
 #include "nsAutoPtr.h"
 #include "prprf.h"
-#include "prtime.h"
 #include "nsEscape.h"
 
 #define HEXDUMP_MAX_ROWS 16
@@ -178,10 +178,9 @@ nsAboutCacheEntry::OpenCacheEntry(nsIURI *uri)
 static PRTime SecondsToPRTime(uint32_t t_sec)
 {
     PRTime t_usec, usec_per_sec;
-    LL_I2L(t_usec, t_sec);
-    LL_I2L(usec_per_sec, PR_USEC_PER_SEC);
-    t_usec *= usec_per_sec;
-    return t_usec;
+    t_usec = t_sec;
+    usec_per_sec = PR_USEC_PER_SEC;
+    return t_usec *= usec_per_sec;
 }
 static void PrintTimeString(char *buf, uint32_t bufsize, uint32_t t_sec)
 {

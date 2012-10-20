@@ -70,7 +70,11 @@ interface WebGLTexture {
 interface WebGLUniformLocation {
 };
 
-interface WebGLActiveInfo;
+interface WebGLActiveInfo {
+    readonly attribute GLint size;
+    readonly attribute GLenum type;
+    readonly attribute DOMString name;
+};
 
 interface WebGLShaderPrecisionFormat {
     readonly attribute GLint rangeMin;
@@ -588,8 +592,11 @@ interface WebGLRenderingContext {
 
     void generateMipmap(GLenum target);
 
+    [Creator]
     WebGLActiveInfo? getActiveAttrib(WebGLProgram? program, GLuint index);
+    [Creator]
     WebGLActiveInfo? getActiveUniform(WebGLProgram? program, GLuint index);
+
     sequence<WebGLShader>? getAttachedShaders(WebGLProgram? program);
 
     [WebGLHandlesContextLoss] GLint getAttribLocation(WebGLProgram? program, DOMString name);
@@ -769,21 +776,7 @@ interface WebGLContextEvent : Event {
 
 // specific extension interfaces
 
-interface WebGLExtensionStandardDerivatives {
-    const GLenum FRAGMENT_SHADER_DERIVATIVE_HINT_OES = 0x8B8B;
-};
-
-interface WebGLExtensionLoseContext {
-    void loseContext();
-    void restoreContext();
-};
-
-interface WebGLExtensionTextureFilterAnisotropic
-{
-    const GLenum TEXTURE_MAX_ANISOTROPY_EXT     = 0x84FE;
-    const GLenum MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
-};
-
+[NoInterfaceObject]
 interface WebGLExtensionCompressedTextureS3TC
 {
     const GLenum COMPRESSED_RGB_S3TC_DXT1_EXT  = 0x83F0;
@@ -792,6 +785,7 @@ interface WebGLExtensionCompressedTextureS3TC
     const GLenum COMPRESSED_RGBA_S3TC_DXT5_EXT = 0x83F3;
 };
 
+[NoInterfaceObject]
 interface WebGLExtensionCompressedTextureATC
 {
     const GLenum COMPRESSED_RGB_ATC_WEBGL                     = 0x8C92;
@@ -799,6 +793,7 @@ interface WebGLExtensionCompressedTextureATC
     const GLenum COMPRESSED_RGBA_ATC_INTERPOLATED_ALPHA_WEBGL = 0x87EE;
 };
 
+[NoInterfaceObject]
 interface WebGLExtensionCompressedTexturePVRTC
 {
     const GLenum COMPRESSED_RGB_PVRTC_4BPPV1  = 0x8C00;
@@ -807,11 +802,38 @@ interface WebGLExtensionCompressedTexturePVRTC
     const GLenum COMPRESSED_RGBA_PVRTC_2BPPV1 = 0x8C03;
 };
 
+[NoInterfaceObject]
+interface WebGLExtensionDebugRendererInfo
+{
+    const GLenum UNMASKED_VENDOR_WEBGL        = 0x9245;
+    const GLenum UNMASKED_RENDERER_WEBGL      = 0x9246;
+};
+
+[NoInterfaceObject]
 interface WebGLExtensionDepthTexture
 {
     const GLenum UNSIGNED_INT_24_8_WEBGL = 0x84FA;
 };
 
+[NoInterfaceObject]
+interface WebGLExtensionLoseContext {
+    void loseContext();
+    void restoreContext();
+};
+
+[NoInterfaceObject]
+interface WebGLExtensionTextureFilterAnisotropic
+{
+    const GLenum TEXTURE_MAX_ANISOTROPY_EXT     = 0x84FE;
+    const GLenum MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+};
+
+[NoInterfaceObject]
+interface WebGLExtensionStandardDerivatives {
+    const GLenum FRAGMENT_SHADER_DERIVATIVE_HINT_OES = 0x8B8B;
+};
+
+[NoInterfaceObject]
 interface WebGLExtensionTextureFloat
 {
 };

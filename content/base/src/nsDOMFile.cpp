@@ -130,7 +130,8 @@ nsDOMFileBase::GetName(nsAString &aFileName)
 NS_IMETHODIMP
 nsDOMFileBase::GetLastModifiedDate(JSContext* cx, JS::Value *aLastModifiedDate)
 {
-  aLastModifiedDate->setNull();
+  JSObject* date = JS_NewDateObjectMsec(cx, JS_Now() / PR_USEC_PER_MSEC);
+  aLastModifiedDate->setObject(*date);
   return NS_OK;
 }
 
@@ -170,6 +171,14 @@ NS_IMETHODIMP
 nsDOMFileBase::GetType(nsAString &aType)
 {
   aType = mContentType;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMFileBase::GetMozLastModifiedDate(uint64_t* aLastModifiedDate)
+{
+  NS_ASSERTION(mIsFile, "Should only be called on files");
+  *aLastModifiedDate = mLastModificationDate;
   return NS_OK;
 }
 
@@ -497,16 +506,27 @@ nsDOMFileFile::GetMozFullPathInternal(nsAString &aFilename)
 }
 
 NS_IMETHODIMP
-nsDOMFileFile::GetLastModifiedDate(JSContext* cx, JS::Value *aLastModifiedDate)
+nsDOMFileFile::GetLastModifiedDate(JSContext* cx, JS::Value* aLastModifiedDate)
 {
+  NS_ASSERTION(mIsFile, "Should only be called on files");
+
   PRTime msecs;
   mFile->GetLastModifiedTime(&msecs);
+  if (IsDateUnknown()) {
+    nsresult rv = mFile->GetLastModifiedTime(&msecs);
+    NS_ENSURE_SUCCESS(rv, rv);
+    mLastModificationDate = msecs;
+  } else {
+    msecs = mLastModificationDate;
+  }
+
   JSObject* date = JS_NewDateObjectMsec(cx, msecs);
   if (date) {
     aLastModifiedDate->setObject(*date);
   }
   else {
-    aLastModifiedDate->setNull();
+    date = JS_NewDateObjectMsec(cx, JS_Now() / PR_USEC_PER_MSEC);
+    aLastModifiedDate->setObject(*date);
   }
 
   return NS_OK;
@@ -557,6 +577,14 @@ nsDOMFileFile::GetType(nsAString &aType)
 
   aType = mContentType;
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMFileFile::GetMozLastModifiedDate(uint64_t* aLastModifiedDate)
+{
+  NS_ASSERTION(mIsFile, "Should only be called on files");
+  *aLastModifiedDate = mLastModificationDate;
   return NS_OK;
 }
 

@@ -1598,6 +1598,8 @@ nsDOMWindowUtils::SendCompositionEvent(const nsAString& aType,
     compositionEvent.data = aData;
   }
 
+  compositionEvent.flags |= NS_EVENT_FLAG_SYNTHETIC_TEST_EVENT;
+
   nsEventStatus status;
   nsresult rv = widget->DispatchEvent(&compositionEvent, status);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1674,6 +1676,8 @@ nsDOMWindowUtils::SendTextEvent(const nsAString& aCompositionString,
 
   textEvent.rangeCount = textRanges.Length();
   textEvent.rangeArray = textRanges.Elements();
+
+  textEvent.flags |= NS_EVENT_FLAG_SYNTHETIC_TEST_EVENT;
 
   nsEventStatus status;
   nsresult rv = widget->DispatchEvent(&textEvent, status);
@@ -2128,6 +2132,26 @@ nsDOMWindowUtils::StopFrameTimeRecording(uint32_t *frameCount, float **frames)
       (*frames)[i] = frameTimes[i];
     }
   }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::BeginTabSwitch()
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget)
+    return NS_ERROR_FAILURE;
+
+  LayerManager *mgr = widget->GetLayerManager();
+  if (!mgr)
+    return NS_ERROR_FAILURE;
+
+  mgr->BeginTabSwitch();
 
   return NS_OK;
 }
@@ -2967,5 +2991,17 @@ nsDOMWindowUtils::GetIsHandlingUserInput(bool* aHandlingUserInput)
 
   *aHandlingUserInput = nsEventStateManager::IsHandlingUserInput();
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::AllowScriptsToClose()
+{
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+  static_cast<nsGlobalWindow*>(window.get())->AllowScriptsToClose();
   return NS_OK;
 }

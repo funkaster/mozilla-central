@@ -940,17 +940,15 @@ nsCacheProfilePrefObserver::MemoryCacheCapacity()
     if (bytes == 0)
         bytes = 32 * 1024 * 1024;
 
-    // Conversion from unsigned int64 to double doesn't work on all platforms.
+    // Conversion from unsigned int64_t to double doesn't work on all platforms.
     // We need to truncate the value at INT64_MAX to make sure we don't
     // overflow.
     if (bytes > INT64_MAX)
         bytes = INT64_MAX;
 
-    uint64_t kbytes;
-    LL_SHR(kbytes, bytes, 10);
+    uint64_t kbytes = bytes >> 10;
 
-    double kBytesD;
-    LL_L2D(kBytesD, (int64_t) kbytes);
+    double kBytesD = double(kbytes);
 
     double x = log(kBytesD)/log(2.0) - 14;
     if (x > 0) {
@@ -1548,7 +1546,8 @@ nsCacheService::CreateDiskDevice()
     if (NS_FAILED(rv)) {
 #if DEBUG
         printf("###\n");
-        printf("### mDiskDevice->Init() failed (0x%.8x)\n", rv);
+        printf("### mDiskDevice->Init() failed (0x%.8x)\n",
+               static_cast<uint32_t>(rv));
         printf("###    - disabling disk cache for this session.\n");
         printf("###\n");
 #endif        

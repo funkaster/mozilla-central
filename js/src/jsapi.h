@@ -15,6 +15,7 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/StandardInteger.h"
 #ifdef __cplusplus
+# include "mozilla/RangedPtr.h"
 # include "mozilla/ThreadLocal.h"
 #endif
 
@@ -46,6 +47,18 @@
 
 #ifdef __cplusplus
 namespace JS {
+
+typedef mozilla::RangedPtr<const jschar> CharPtr;
+
+class StableCharPtr : public CharPtr {
+  public:
+    StableCharPtr(const StableCharPtr &s) : CharPtr(s) {}
+    StableCharPtr(const mozilla::RangedPtr<const jschar> &s) : CharPtr(s) {}
+    StableCharPtr(const jschar *s, size_t len) : CharPtr(s, len) {}
+    StableCharPtr(const jschar *pos, const jschar *start, size_t len)
+      : CharPtr(pos, start, len)
+    {}
+};
 
 /*
  * Protecting non-jsval, non-JSObject *, non-JSString * values from collection
@@ -1870,6 +1883,9 @@ typedef void
 typedef JSBool
 (* JSEqualityOp)(JSContext *cx, JSHandleObject obj, JSHandleValue v, JSBool *bp);
 
+typedef JSRawObject
+(* JSWeakmapKeyDelegateOp)(JSRawObject obj);
+
 /*
  * Typedef for native functions called by the JS VM.
  *
@@ -2913,8 +2929,14 @@ JS_IsBuiltinFunctionConstructor(JSFunction *fun);
 #define JS_LockRuntime      JS_Lock
 #define JS_UnlockRuntime    JS_Unlock
 
+typedef enum JSUseHelperThreads
+{
+    JS_NO_HELPER_THREADS,
+    JS_USE_HELPER_THREADS
+} JSUseHelperThreads;
+
 extern JS_PUBLIC_API(JSRuntime *)
-JS_NewRuntime(uint32_t maxbytes);
+JS_NewRuntime(uint32_t maxbytes, JSUseHelperThreads useHelperThreads);
 
 /* Deprecated. */
 #define JS_CommenceRuntimeShutDown(rt) ((void) 0)
@@ -3106,11 +3128,8 @@ JS_StringToVersion(const char *string);
                                                    being converted to error
                                                    reports */
 
-#define JSOPTION_RELIMIT        JS_BIT(9)       /* Throw exception on any
-                                                   regular expression which
-                                                   backtracks more than n^3
-                                                   times, where n is length
-                                                   of the input string */
+/* JS_BIT(9) is currently unused. */
+
 /* JS_BIT(10) is currently unused. */
 
 /* JS_BIT(11) is currently unused. */

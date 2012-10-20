@@ -80,11 +80,12 @@ var shell = {
     return this.CrashSubmit;
   },
 
-  reportCrash: function shell_reportCrash() {
-    let crashID;
+  reportCrash: function shell_reportCrash(aCrashID) {
+    let crashID = aCrashID;
     try {
-      crashID = Cc["@mozilla.org/xre/app-info;1"]
-                .getService(Ci.nsIXULRuntime).lastRunCrashID;
+      if (crashID == undefined || crashID == "")
+        crashID = Cc["@mozilla.org/xre/app-info;1"]
+                    .getService(Ci.nsIXULRuntime).lastRunCrashID;
     } catch(e) { }
     if (Services.prefs.getBoolPref('app.reportCrashes') &&
         crashID) {
@@ -497,6 +498,10 @@ Services.obs.addObserver(function(aSubject, aTopic, aData) {
                           fullscreenorigin: aData });
 }, "fullscreen-origin-change", false);
 
+Services.obs.addObserver(function onWebappsStart(subject, topic, data) {
+  shell.sendChromeEvent({ type: 'webapps-registry-start' });
+}, 'webapps-registry-start', false);
+
 Services.obs.addObserver(function onWebappsReady(subject, topic, data) {
   shell.sendChromeEvent({ type: 'webapps-registry-ready' });
 }, 'webapps-registry-ready', false);
@@ -775,6 +780,26 @@ window.addEventListener('ContentStart', function ss_onContentStart() {
   });
 });
 
+(function contentCrashTracker() {
+  Services.obs.addObserver(function(aSubject, aTopic, aData) {
+      let cs = Cc["@mozilla.org/consoleservice;1"]
+                 .getService(Ci.nsIConsoleService);
+      let props = aSubject.QueryInterface(Ci.nsIPropertyBag2);
+      if (props.hasKey("abnormal") && props.hasKey("dumpID")) {
+        shell.reportCrash(props.getProperty("dumpID"));
+      }
+    },
+    "ipc:content-shutdown", false);
+})();
+
+window.addEventListener('ContentStart', function update_onContentStart() {
+  let updatePrompt = Cc["@mozilla.org/updates/update-prompt;1"]
+                       .createInstance(Ci.nsIUpdatePrompt);
+
+  let content = shell.contentBrowser.contentWindow;
+  content.addEventListener("mozContentEvent", updatePrompt.wrappedJSObject);
+});
+
 (function geolocationStatusTracker() {
   let gGeolocationActiveCount = 0;
 
@@ -834,3 +859,13 @@ window.addEventListener('ContentStart', function ss_onContentStart() {
     });
 }, 'volume-state-changed', false);
 })();
+
+Services.obs.addObserver(function(aSubject, aTopic, aData) {
+  let data = JSON.parse(aData);
+  shell.sendChromeEvent({
+    type: "activity-done",
+    success: data.success,
+    manifestURL: data.manifestURL,
+    pageURL: data.pageURL
+  });
+}, "activity-done", false);

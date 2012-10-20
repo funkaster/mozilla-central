@@ -133,7 +133,6 @@
 #include "xpcexception.h"
 #include "xpcjsid.h"
 #include "prlong.h"
-#include "prmem.h"
 #include "prenv.h"
 #include "prclist.h"
 #include "nsString.h"
@@ -776,6 +775,7 @@ public:
         IDX_CONSTRUCTOR             = 0 ,
         IDX_TO_STRING               ,
         IDX_TO_SOURCE               ,
+        IDX_VALUE_OF                ,
         IDX_LAST_RESULT             ,
         IDX_RETURN_CODE             ,
         IDX_VALUE                   ,
@@ -2833,12 +2833,6 @@ public:
                            nsISupports* aCOMObj,
                            XPCWrappedNative** aWrapper);
 
-    // Returns the wrapper corresponding to the parent of our mFlatJSObject.
-    //
-    // If the parent does not have a WN, or if there is no parent, null is
-    // returned.
-    XPCWrappedNative *GetParentWrapper();
-
     bool IsOrphan();
     nsresult RescueOrphans(XPCCallContext& ccx);
 
@@ -3831,7 +3825,7 @@ extern JSBool
 xpc_JSObjectIsID(JSContext *cx, JSObject* obj);
 
 /***************************************************************************/
-// in xpcdebug.cpp
+// in XPCDebug.cpp
 
 extern JSBool
 xpc_DumpJSStack(JSContext* cx, JSBool showArgs, JSBool showLocals,
@@ -3846,9 +3840,6 @@ xpc_PrintJSStack(JSContext* cx, JSBool showArgs, JSBool showLocals,
 
 extern JSBool
 xpc_DumpEvalInJSStackFrame(JSContext* cx, uint32_t frameno, const char* text);
-
-extern JSBool
-xpc_DumpJSObject(JSObject* obj);
 
 extern JSBool
 xpc_InstallJSDebuggerKeywordHandler(JSRuntime* rt);

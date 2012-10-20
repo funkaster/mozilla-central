@@ -57,8 +57,7 @@ members = [
 
     # dom/interfaces/canvas
     #
-    # nsIDOMCanvasRenderingContext2D and friends
-    'nsIDOMCanvasRenderingContext2D.*',
+    # canvas friends
     'nsIDOMTextMetrics.*',
     'nsIDOMCanvasGradient.*',
     'nsIDOMCanvasPattern.*',
@@ -96,6 +95,7 @@ members = [
     'nsIDOMDocument.onreadystatechange',
     'nsIDOMDocument.onmouseenter',
     'nsIDOMDocument.onmouseleave',
+    'nsIDOMDocument.URL',
     'nsIDOMElement.removeAttributeNS',
     'nsIDOMElement.removeAttribute',
     'nsIDOMElement.getAttribute',
@@ -208,7 +208,6 @@ members = [
     'nsIDOMHTMLDocument.getElementsByName',
     'nsIDOMHTMLDocument.anchors',
     'nsIDOMHTMLDocument.links',
-    'nsIDOMHTMLDocument.URL',
     'nsIDOMHTMLDocument.forms',
     'nsIDOMHTMLDocument.cookie',
     'nsIDOMHTMLDocument.images',
@@ -463,8 +462,6 @@ irregularFilenames = {
 
     'nsIDOMBlob': 'nsIDOMFile',
 
-    'nsIWebGLActiveInfo': 'nsIDOMWebGLRenderingContext',
-
     'nsIIndexedDatabaseUsageCallback': 'nsIIndexedDatabaseManager',
 
     'nsIDOMTouch': 'nsIDOMTouchEvent',
@@ -488,11 +485,8 @@ customIncludes = [
     'nsSVGStylableElement.h',
     'nsHTMLDocument.h',
     'nsDOMQS.h',
+    'nsDOMStringMap.h',
     'mozilla/dom/ImageData.h'
-    ]
-
-customQuickStubs = [
-    'CustomQS_Canvas2D.h'
     ]
 
 customReturnInterfaces = [
@@ -502,8 +496,8 @@ customReturnInterfaces = [
     ]
 
 nsIDOMNode_GetChildNodes_customMethodCallCode = """
-    nsChildContentList* result = static_cast<nsChildContentList*>(self->GetChildNodesList());
-    rv = result ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+    nsChildContentList* result = static_cast<nsChildContentList*>(self->ChildNodes());
+    rv = NS_OK;
 """
 
 nsIDOMHTMLDocument_Write_customMethodCallCode = """
@@ -569,7 +563,7 @@ customMethodCalls = {
         },
     'nsIDOMNode_GetParentNode': {
         'thisType': 'nsINode',
-        'code': '    nsINode *result = self->GetNodeParent();',
+        'code': '    nsINode *result = self->GetParentNode();',
         'canFail': False
         },
     'nsIDOMNode_GetParentElement': {
@@ -581,30 +575,55 @@ customMethodCalls = {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
         'arg1Type': 'nsINode',
-        'code': '    nsINode *result = self->InsertBefore(arg0, arg1, &rv);\n'
-                '    if(NS_FAILED(rv))\n'
-                '        result = nullptr;'
+        'code': '    nsINode* result;'
+                '    if (arg0) {\n'
+                '        mozilla::ErrorResult error;\n'
+                '        result = self->InsertBefore(*arg0, arg1, error);\n'
+                '        rv = error.ErrorCode();\n'
+                '    } else {\n'
+                '        rv = NS_ERROR_NULL_POINTER;\n'
+                '        result = nullptr;\n'
+                '    }'
         },
     'nsIDOMNode_ReplaceChild': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
         'arg1Type': 'nsINode',
-        'code': '    nsINode *result = self->ReplaceChild(arg0, arg1, &rv);\n'
-                '    if(NS_FAILED(rv))\n'
-                '        result = nullptr;'
+        'code': '    nsINode* result;'
+                '    if (arg0 && arg1) {\n'
+                '        mozilla::ErrorResult error;\n'
+                '        result = self->ReplaceChild(*arg0, *arg1, error);\n'
+                '        rv = error.ErrorCode();\n'
+                '    } else {\n'
+                '        rv = NS_ERROR_NULL_POINTER;\n'
+                '        result = nullptr;\n'
+                '    }'
         },
     'nsIDOMNode_RemoveChild': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
-        'code': '    rv = self->RemoveChild(arg0);\n'
-                '    nsINode *result = NS_SUCCEEDED(rv) ? arg0 : nullptr;'
+        'code': '    nsINode* result;\n'
+                '    if (arg0) {\n'
+                '        mozilla::ErrorResult error;\n'
+                '        result = self->RemoveChild(*arg0, error);\n'
+                '        rv = error.ErrorCode();\n'
+                '    } else {\n'
+                '        rv = NS_ERROR_NULL_POINTER;\n'
+                '        result = nullptr;\n'
+                '    }'
         },
     'nsIDOMNode_AppendChild': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
-        'code': '    nsINode *result = self->AppendChild(arg0, &rv);\n'
-                '    if(NS_FAILED(rv))\n'
-                '        result = nullptr;'
+        'code': '    nsINode* result;\n'
+                '    if (arg0) {\n'
+                '        mozilla::ErrorResult error;\n'
+                '        result = self->AppendChild(*arg0, error);\n'
+                '        rv = error.ErrorCode();\n'
+                '    } else {\n'
+                '        rv = NS_ERROR_NULL_POINTER;\n'
+                '        result = nullptr;\n'
+                '    }'
         },
     'nsIDOMNode_GetNodeType': {
         'thisType': 'nsINode',
@@ -651,10 +670,6 @@ customMethodCalls = {
     'nsIDOMStorage_Clear': {
         'code': nsIDOMStorage_Clear_customMethodCallCode
         },
-    'nsIDOMCanvasRenderingContext2D_StrokeStyle': { 'skipgen': True },
-    'nsIDOMCanvasRenderingContext2D_StrokeStyle': { 'skipgen': True },
-    'nsIDOMCanvasRenderingContext2D_FillStyle': { 'skipgen': True },
-    'nsIDOMCanvasRenderingContext2D_FillStyle': { 'skipgen': True },
     'nsIDOMCSS2Properties_': {
         'thisType': 'nsICSSDeclaration',
         'additionalArguments': 'const nsCSSProperty prop',
@@ -776,7 +791,12 @@ customMethodCalls = {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
         'code': '    uint16_t result;\n'
-                '    rv = self->CompareDocPosition(arg0, &result);',
+                '    if (arg0) {\n'
+                '        result = self->CompareDocumentPosition(*arg0);\n'
+                '        rv = NS_OK;\n'
+                '    } else {\n'
+                '        rv = NS_ERROR_INVALID_ARG;\n'
+                '    }',
         'canFail': True
         },
     'nsIDOMNode_GetTextContent': {
@@ -789,6 +809,7 @@ customMethodCalls = {
         },
     'nsIDOMNode_IsDefaultNamespace': {
         'thisType': 'nsINode',
+        'code': '    bool result = self->IsDefaultNamespace(arg0);',
         'canFail': False
         },
     'nsIDOMNode_LookupNamespaceURI': {
@@ -798,7 +819,7 @@ customMethodCalls = {
     'nsIDOMNode_IsEqualNode': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
-        'code': '    bool result = self->IsEqualTo(arg0);',
+        'code': '    bool result = self->IsEqualNode(arg0);',
         'canFail': False
         },
     'nsIDOMNode_GetUserData': {
@@ -859,6 +880,11 @@ customMethodCalls = {
         'code': '    mozilla::ErrorResult error;\n'
                 '    self->SetInnerHTML(arg0, error);\n'
                 '    rv = error.ErrorCode();'
+        },
+    'nsIDOMHTMLElement_GetDataset': {
+        'thisType' : 'nsGenericHTMLElement',
+        'code': '    nsRefPtr<nsDOMStringMap> result = self->Dataset();',
+        'canFail': False
         },
     'nsIDOMElementCSSInlineStyle_GetStyle': {
         'thisType': 'nsStyledElement',
@@ -973,13 +999,6 @@ customMethodCalls = {
         'thisType' : 'nsIDOMWindow',
         'unwrapThisFailureFatal' : False
         },
-    # Canvas 2D
-    'nsIDOMCanvasRenderingContext2D_CreateImageData': CUSTOM_QS,
-    'nsIDOMCanvasRenderingContext2D_PutImageData': CUSTOM_QS,
-    # Nasty hack to make the ordering of |arc| and |arcTo| correct.
-    # |arc| is not traceable because it has an optional argument.
-    'nsIDOMCanvasRenderingContext2D_ArcTo' : { 'traceable' : False },
-
     'nsIDOMImageData_GetWidth': {
         'thisType': 'nsIDOMImageData',
         'code': 'uint32_t result = static_cast<mozilla::dom::ImageData*>(self)->GetWidth();',
@@ -994,4 +1013,3 @@ customMethodCalls = {
         'canFail': False
         }
     }
-

@@ -39,7 +39,6 @@
         './include',
         './src/sipcc/include',
         './src/sipcc/cpr/include',
-        '../../../nsprpub/pr/include',
         '../../../ipc/chromium/src',
         '../../../ipc/chromium/src/base/third_party/nspr',
         '../../../xpcom/base',
@@ -128,6 +127,8 @@
         './src/softphonewrapper/CC_SIPCCLineInfo.h',
         './src/softphonewrapper/CC_SIPCCService.h',
         # PeerConnection
+        './src/peerconnection/MediaStreamList.cpp',
+        './src/peerconnection/MediaStreamList.h',
         './src/peerconnection/PeerConnectionCtx.cpp',
         './src/peerconnection/PeerConnectionCtx.h',
         './src/peerconnection/PeerConnectionImpl.cpp',
@@ -151,6 +152,17 @@
         'WEBRTC_RELATIVE_PATH',
       	'HAVE_WEBRTC_VIDEO',
         'HAVE_WEBRTC_VOICE',
+        'HAVE_STDLIB_H=1',
+        'INTEGER_TYPES_H="\\"mozilla/StandardInteger.h\\""',
+        'HAVE_UINT8_T=1',
+        'HAVE_UINT16_T=1',
+        'HAVE_UINT32_T=1',
+        'HAVE_UINT64_T=1',
+      ],
+
+      'cflags_mozilla': [
+        '$(NSPR_CFLAGS)',
+        '$(NSS_CFLAGS)',
       ],
 
       #
@@ -184,7 +196,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
           ],
         }],
         ['OS=="win"', {
@@ -212,8 +223,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
-            '-Wno-error=conversion'
           ],
         }],
       ],
@@ -240,7 +249,6 @@
         './src/sipcc/core/sdp',
         './src/sipcc/core/gsm/h',
         './src/sipcc/plat/common',
-        '../../../nsprpub/pr/include',
         '../../../media/mtransport',
         '../../../dom/base',
         '../trunk/third_party/libsrtp/srtp/include',
@@ -574,6 +582,10 @@
       'defines' : [
       ],
 
+      'cflags_mozilla': [
+        '$(NSPR_CFLAGS)',
+      ],
+
       #
       # OS SPECIFIC
       #      
@@ -633,7 +645,6 @@
           ],
 
           'cflags_mozilla': [
-            '-Werror',
           ],
         }],
         ['OS=="win"', {
@@ -752,8 +763,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
-            '-Wno-error=conversion'
           ],
         }],
       ],

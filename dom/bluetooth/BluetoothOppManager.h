@@ -29,7 +29,8 @@ public:
 
   ~BluetoothOppManager();
   static BluetoothOppManager* Get();
-  void ReceiveSocketData(mozilla::ipc::UnixSocketRawData* aMessage);
+  void ReceiveSocketData(mozilla::ipc::UnixSocketRawData* aMessage)
+    MOZ_OVERRIDE;
 
   /*
    * If a application wnats to send a file, first, it needs to
@@ -45,10 +46,12 @@ public:
   bool Connect(const nsAString& aDeviceObjectPath,
                BluetoothReplyRunnable* aRunnable);
   void Disconnect();
+  bool Listen();
 
   bool SendFile(BlobParent* aBlob,
                 BluetoothReplyRunnable* aRunnable);
   bool StopSendingFile(BluetoothReplyRunnable* aRunnable);
+  void ConfirmReceivingFile(bool aConfirm, BluetoothReplyRunnable* aRunnable);
 
   void SendConnectRequest();
   void SendPutHeaderRequest(const nsAString& aFileName, int aFileSize);
@@ -59,12 +62,31 @@ public:
 
 private:
   BluetoothOppManager();
-  void FileTransferComplete(bool aSuccess, bool aReceived,
-                            const nsString& aFileName, uint32_t aFileLength);
-  void UpdateProgress(uint32_t aProcessed, uint32_t aFileLength);
+  void StartFileTransfer(const nsString& aDeviceAddress,
+                         bool aReceived,
+                         const nsString& aFileName,
+                         uint32_t aFileLength,
+                         const nsString& aContentType);
+  void FileTransferComplete(const nsString& aDeviceAddress,
+                            bool aSuccess,
+                            bool aReceived,
+                            const nsString& aFileName,
+                            uint32_t aFileLength,
+                            const nsString& aContentType);
+  void UpdateProgress(const nsString& aDeviceAddress,
+                      bool aReceived,
+                      uint32_t aProcessedLength,
+                      uint32_t aFileLength);
+  void ReceivingFileConfirmation(const nsString& aAddress,
+                                 const nsString& aFileName,
+                                 uint32_t aFileLength,
+                                 const nsString& aContentType);
   void ReplyToConnect();
   void ReplyToDisconnect();
-  void ReplyToPut(bool aFinal);
+  void ReplyToPut(bool aFinal, bool aContinue);
+  virtual void OnConnectSuccess() MOZ_OVERRIDE;
+  virtual void OnConnectError() MOZ_OVERRIDE;
+  virtual void OnDisconnect() MOZ_OVERRIDE;
 
   bool mConnected;
   int mConnectionId;
@@ -74,6 +96,10 @@ private:
   int mRemoteMaxPacketLength;
   bool mAbortFlag;
   int mPacketLeftLength;
+  nsString mConnectedDeviceAddress;
+  bool mReceiving;
+  bool mPutFinal;
+  bool mWaitingForConfirmationFlag;
 
   nsCOMPtr<nsIDOMBlob> mBlob;
   nsCOMPtr<nsIThread> mReadFileThread;

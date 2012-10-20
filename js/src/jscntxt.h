@@ -471,6 +471,9 @@ struct JSRuntime : js::RuntimeFriendFields
 
     bool initSelfHosting(JSContext *cx);
     void markSelfHostedGlobal(JSTracer *trc);
+    bool isSelfHostedGlobal(js::HandleObject global) {
+        return global == selfHostedGlobal_;
+    }
     JSFunction *getSelfHostedFunction(JSContext *cx, const char *name);
     bool cloneSelfHostedValueById(JSContext *cx, js::HandleId id, js::HandleObject holder,
                                   js::MutableHandleValue vp);
@@ -811,6 +814,12 @@ struct JSRuntime : js::RuntimeFriendFields
      */
     JSCList             debuggerList;
 
+    /*
+     * Head of circular list of all enabled Debuggers that have
+     * onNewGlobalObject handler methods established.
+     */
+    JSCList             onNewGlobalObjectWatchers;
+
     /* Bookkeeping information for debug scope objects. */
     js::DebugScopes     *debugScopes;
 
@@ -972,7 +981,7 @@ struct JSRuntime : js::RuntimeFriendFields
         ionReturnOverride_ = v;
     }
 
-    JSRuntime();
+    JSRuntime(JSUseHelperThreads useHelperThreads);
     ~JSRuntime();
 
     bool init(uint32_t maxbytes);
@@ -1089,6 +1098,17 @@ struct JSRuntime : js::RuntimeFriendFields
 
     void sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, JS::RuntimeSizes *runtime);
     size_t sizeOfExplicitNonHeap();
+
+  private:
+    JSUseHelperThreads useHelperThreads_;
+  public:
+    bool useHelperThreads() const {
+#ifdef JS_THREADSAFE
+        return useHelperThreads_ == JS_USE_HELPER_THREADS;
+#else
+        return false;
+#endif
+    }
 };
 
 /* Common macros to access thread-local caches in JSRuntime. */
@@ -1971,12 +1991,6 @@ namespace mjit {
 #endif
 
 } /* namespace js */
-
-/* How much expansion of inlined frames to do when inspecting the stack. */
-enum FrameExpandKind {
-    FRAME_EXPAND_NONE = 0,
-    FRAME_EXPAND_ALL = 1
-};
 
 namespace js {
 

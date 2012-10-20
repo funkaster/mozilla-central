@@ -606,7 +606,7 @@ public:
 JSString *
 nsOuterWindowProxy::obj_toString(JSContext *cx, JSObject *proxy)
 {
-    JS_ASSERT(js::IsProxy(proxy));
+    MOZ_ASSERT(js::IsProxy(proxy));
 
     return JS_NewStringCopyZ(cx, "[object Window]");
 }
@@ -626,8 +626,29 @@ nsOuterWindowProxy::finalize(JSFreeOp *fop, JSObject *proxy)
 nsOuterWindowProxy
 nsOuterWindowProxy::singleton;
 
+class nsChromeOuterWindowProxy : public nsOuterWindowProxy
+{
+public:
+  nsChromeOuterWindowProxy() : nsOuterWindowProxy() {}
+
+  virtual JSString *obj_toString(JSContext *cx, JSObject *wrapper);
+
+  static nsChromeOuterWindowProxy singleton;
+};
+
+JSString *
+nsChromeOuterWindowProxy::obj_toString(JSContext *cx, JSObject *proxy)
+{
+    MOZ_ASSERT(js::IsProxy(proxy));
+
+    return JS_NewStringCopyZ(cx, "[object ChromeWindow]");
+}
+
+nsChromeOuterWindowProxy
+nsChromeOuterWindowProxy::singleton;
+
 static JSObject*
-NewOuterWindowProxy(JSContext *cx, JSObject *parent)
+NewOuterWindowProxy(JSContext *cx, JSObject *parent, bool isChrome)
 {
   JSAutoCompartment ac(cx, parent);
   JSObject *proto;
@@ -635,7 +656,9 @@ NewOuterWindowProxy(JSContext *cx, JSObject *parent)
     return nullptr;
 
   JSObject *obj = js::Wrapper::New(cx, parent, proto, parent,
-                                   &nsOuterWindowProxy::singleton);
+                                   isChrome ? &nsChromeOuterWindowProxy::singleton
+                                            : &nsOuterWindowProxy::singleton);
+
   NS_ASSERTION(js::GetObjectClass(obj)->ext.innerObject, "bad class");
   return obj;
 }
@@ -676,6 +699,7 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
     mShowFocusRingForContent(false),
     mFocusByKeyOccurred(false),
     mNotifiedIDDestroyed(false),
+    mAllowScriptsToClose(false),
     mTimeoutInsertionPoint(nullptr),
     mTimeoutPublicIdCounter(1),
     mTimeoutFiringDepth(0),
@@ -1245,7 +1269,7 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGlobalWindow)
     }
     nsEventListenerManager* elm = tmp->GetListenerManager(false);
     if (elm) {
-      elm->UnmarkGrayJSListeners();
+      elm->MarkForCC();
     }
     tmp->UnmarkGrayTimers();
     return true;
@@ -1673,7 +1697,8 @@ nsGlobalWindow::CreateOuterObject(nsGlobalWindow* aNewInner)
 {
   JSContext* cx = mContext->GetNativeContext();
 
-  if (IsChromeWindow()) {
+  bool isChrome = IsChromeWindow();
+  if (isChrome) {
     // Always enable E4X for XUL and other chrome content -- there is no
     // need to preserve the <!-- script hiding hack from JS-in-HTML daze
     // (introduced in 1995 for graceful script degradation in Netscape 1,
@@ -1681,7 +1706,8 @@ nsGlobalWindow::CreateOuterObject(nsGlobalWindow* aNewInner)
     JS_SetOptions(cx, JS_GetOptions(cx) | JSOPTION_MOAR_XML);
   }
 
-  JSObject* outer = NewOuterWindowProxy(cx, aNewInner->FastGetGlobalJSObject());
+  JSObject* outer = NewOuterWindowProxy(cx, aNewInner->FastGetGlobalJSObject(),
+                                        isChrome);
   if (!outer) {
     return NS_ERROR_FAILURE;
   }
@@ -1987,7 +2013,8 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
       mJSObject = mContext->GetNativeGlobal();
       SetWrapper(mJSObject);
     } else {
-      JSObject *outerObject = NewOuterWindowProxy(cx, xpc_UnmarkGrayObject(newInnerWindow->mJSObject));
+      JSObject *outerObject = NewOuterWindowProxy(cx, xpc_UnmarkGrayObject(newInnerWindow->mJSObject),
+                                                  thisChrome);
       if (!outerObject) {
         NS_ERROR("out of memory");
         return NS_ERROR_FAILURE;
@@ -6558,7 +6585,7 @@ nsGlobalWindow::Close()
   // opened by script.
   if (!mDocShell->GetIsApp() &&
       !mHadOriginalOpener && !nsContentUtils::IsCallerTrustedForWrite()) {
-    bool allowClose =
+    bool allowClose = mAllowScriptsToClose ||
       Preferences::GetBool("dom.allow_scripts_to_close_windows", true);
     if (!allowClose) {
       // We're blocking the close operation
@@ -8240,7 +8267,25 @@ nsGlobalWindow::GetComputedStyle(nsIDOMElement* aElt,
                                  const nsAString& aPseudoElt,
                                  nsIDOMCSSStyleDeclaration** aReturn)
 {
-  FORWARD_TO_OUTER(GetComputedStyle, (aElt, aPseudoElt, aReturn),
+  return GetComputedStyleHelper(aElt, aPseudoElt, false, aReturn);
+}
+
+NS_IMETHODIMP
+nsGlobalWindow::GetDefaultComputedStyle(nsIDOMElement* aElt,
+                                        const nsAString& aPseudoElt,
+                                        nsIDOMCSSStyleDeclaration** aReturn)
+{
+  return GetComputedStyleHelper(aElt, aPseudoElt, true, aReturn);
+}
+
+nsresult
+nsGlobalWindow::GetComputedStyleHelper(nsIDOMElement* aElt,
+                                       const nsAString& aPseudoElt,
+                                       bool aDefaultStylesOnly,
+                                       nsIDOMCSSStyleDeclaration** aReturn)
+{
+  FORWARD_TO_OUTER(GetComputedStyleHelper, (aElt, aPseudoElt,
+                                            aDefaultStylesOnly, aReturn),
                    NS_ERROR_NOT_INITIALIZED);
 
   NS_ENSURE_ARG_POINTER(aReturn);
@@ -8258,13 +8303,34 @@ nsGlobalWindow::GetComputedStyle(nsIDOMElement* aElt,
   mDocShell->GetPresShell(getter_AddRefs(presShell));
 
   if (!presShell) {
-    return NS_OK;
+    // Try flushing frames on our parent in case there's a pending
+    // style change that will create the presshell.
+    nsGlobalWindow *parent =
+      static_cast<nsGlobalWindow *>(GetPrivateParent());
+    if (!parent) {
+      return NS_OK;
+    }
+
+    parent->FlushPendingNotifications(Flush_Frames);
+
+    // Might have killed mDocShell
+    if (!mDocShell) {
+      return NS_OK;
+    }
+
+    mDocShell->GetPresShell(getter_AddRefs(presShell));
+
+    if (!presShell) {
+      return NS_OK;
+    }
   }
 
   nsCOMPtr<dom::Element> element = do_QueryInterface(aElt);
   NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
   nsRefPtr<nsComputedDOMStyle> compStyle =
-    NS_NewComputedDOMStyle(element, aPseudoElt, presShell);
+    NS_NewComputedDOMStyle(element, aPseudoElt, presShell,
+                           aDefaultStylesOnly ? nsComputedDOMStyle::eDefaultOnly :
+                                                nsComputedDOMStyle::eAll);
 
   *aReturn = compStyle.forget().get();
 

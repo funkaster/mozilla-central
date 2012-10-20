@@ -198,7 +198,7 @@ class ProcessHandlerMixin(object):
                 self.pid = pid
                 self.tid = tid
 
-                if canCreateJob:
+                if not self._ignore_children and canCreateJob:
                     try:
                         # We create a new job for this process, so that we can kill
                         # the process and any sub-processes
@@ -237,7 +237,7 @@ class ProcessHandlerMixin(object):
                                                 0,    # job mem limit (ignored)
                                                 0,    # peak process limit (ignored)
                                                 0)    # peak job limit (ignored)
-                                                
+
                         winprocess.SetInformationJobObject(self._job,
                                                            JobObjectExtendedLimitInformation,
                                                            addressof(jeli),
@@ -312,7 +312,7 @@ falling back to not using job objects for managing child processes"""
                         # parent abort (which is what we're looking for here).
                         if diff.seconds > self.MAX_IOCOMPLETION_PORT_NOTIFICATION_DELAY:
                             print >> sys.stderr, "Parent process %s exited with children alive:" % self.pid
-                            print >> sys.stderr, "PIDS: %s" %  ', '.join(self._spawned_procs.keys())
+                            print >> sys.stderr, "PIDS: %s" %  ', '.join([str(i) for i in self._spawned_procs])
                             print >> sys.stderr, "Attempting to kill them..."
                             self.kill()
                             self._process_events.put({self.pid: 'FINISHED'})
@@ -392,10 +392,11 @@ falling back to not using job objects for managing child processes"""
 
                 # Python 2.5 uses isAlive versus is_alive use the proper one
                 threadalive = False
-                if hasattr(self._procmgrthread, 'is_alive'):
-                    threadalive = self._procmgrthread.is_alive()
-                else:
-                    threadalive = self._procmgrthread.isAlive()
+                if hasattr(self, "_procmgrthread"):
+                    if hasattr(self._procmgrthread, 'is_alive'):
+                        threadalive = self._procmgrthread.is_alive()
+                    else:
+                        threadalive = self._procmgrthread.isAlive()
                 if self._job and threadalive: 
                     # Then we are managing with IO Completion Ports
                     # wait on a signal so we know when we have seen the last
@@ -426,7 +427,7 @@ falling back to not using job objects for managing child processes"""
                     # Not managing with job objects, so all we can reasonably do
                     # is call waitforsingleobject and hope for the best
 
-                    if MOZPROCESS_DEBUG:
+                    if MOZPROCESS_DEBUG and not self._ignore_children:
                         print "DBG::MOZPROC NOT USING JOB OBJECTS!!!"
                     # First, make sure we have not already ended
                     if self.returncode != winprocess.STILL_ACTIVE:
@@ -605,13 +606,19 @@ falling back to not using job objects for managing child processes"""
         """
         self.didTimeout = False
         self.startTime = datetime.now()
-        self.proc = self.Process(self.cmd,
-                                 stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT,
-                                 cwd=self.cwd,
-                                 env=self.env,
-                                 ignore_children = self._ignore_children,
-                                 **self.keywordargs)
+
+        # default arguments
+        args = dict(stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=self.cwd,
+                    env=self.env,
+                    ignore_children=self._ignore_children)
+
+        # build process arguments
+        args.update(self.keywordargs)
+
+        # launch the process
+        self.proc = self.Process(self.cmd, **args)
 
         self.processOutput(timeout=timeout, outputTimeout=outputTimeout)
 
