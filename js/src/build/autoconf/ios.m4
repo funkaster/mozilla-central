@@ -27,66 +27,69 @@ MOZ_ARG_WITH_STRING(ios-arch,
                    iOS architecture, defaults to armv7 for device, x86 for simulator],
     ios_arch=$withval)
 
-dnl test for Xcode 4.3+
-if ! test -d "/Applications/Xcode.app/Contents/Developer/Platforms" ; then
-    AC_MSG_ERROR([You must install Xcode first from the App Store])
-fi
 
-if test "$ios_target" == "iPhoneSimulator" ; then
-    dnl force ios_arch to i386 for simulator
-    CPU_ARCH=i386
-    ios_arch=i386
-    target_name=x86
-    target=i386-darwin
-else
-    if test -z "$ios_arch" ; then
-        ios_arch=armv7
-    fi 
-    target_name=arm
-    target=arm-darwin
-fi
-target_os=darwin
+case "$ios_target" in
+iPhoneOS|iPhoneSimulator)
+    dnl test for Xcode 4.3+
+    if ! test -d "/Applications/Xcode.app/Contents/Developer/Platforms" ; then
+        AC_MSG_ERROR([You must install Xcode first from the App Store])
+    fi
 
-xcode_base="/Applications/Xcode.app/Contents/Developer/Platforms"
-ios_sdk_root=""
-ios_toolchain="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    if test "$ios_target" == "iPhoneSimulator" ; then
+        dnl force ios_arch to i386 for simulator
+        CPU_ARCH=i386
+        ios_arch=i386
+        target_name=x86
+        target=i386-darwin
+    else
+        if test -z "$ios_arch" ; then
+            ios_arch=armv7
+        fi 
+        target_name=arm
+        target=arm-darwin
+    fi
+    target_os=darwin
 
-dnl test to see if the actual sdk exists
-ios_sdk_root="$xcode_base"/$ios_target.platform/Developer/SDKs/$ios_target"$ios_sdk_version".sdk
-if ! test -d "$ios_sdk_root" ; then
-    AC_MSG_ERROR([Invalid SDK version])
-fi
+    xcode_base="/Applications/Xcode.app/Contents/Developer/Platforms"
+    ios_sdk_root=""
+    ios_toolchain="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
 
-dnl set the compilers
-AS="$ios_toolchain"/as
-CC="$ios_toolchain"/clang
-CXX="$ios_toolchain"/clang++
-CPP="$ios_toolchain/clang -E"
-LD="$ios_toolchain"/ld
-AR="$ios_toolchain"/ar
-RANLIB="$ios_toolchain"/ranlib
-STRIP="$ios_toolchain"/strip
-LDFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -v"
+    dnl test to see if the actual sdk exists
+    ios_sdk_root="$xcode_base"/$ios_target.platform/Developer/SDKs/$ios_target"$ios_sdk_version".sdk
+    if ! test -d "$ios_sdk_root" ; then
+        AC_MSG_ERROR([Invalid SDK version])
+    fi
 
-CFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -miphoneos-version-min=$ios_deploy_version -I$ios_sdk_root/usr/include -pipe -Wno-implicit-int -Wno-return-type"
-CXXFLAGS="$CFLAGS"
-CPPFLAGS=""
+    dnl set the compilers
+    AS="$ios_toolchain"/as
+    CC="$ios_toolchain"/clang
+    CXX="$ios_toolchain"/clang++
+    CPP="$ios_toolchain/clang -E"
+    LD="$ios_toolchain"/ld
+    AR="$ios_toolchain"/ar
+    RANLIB="$ios_toolchain"/ranlib
+    STRIP="$ios_toolchain"/strip
+    LDFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -v"
 
-dnl prevent cross compile section from using these flags as host flags
-if test -z "$HOST_CPPFLAGS" ; then
-    HOST_CPPFLAGS=" "
-fi
-if test -z "$HOST_CFLAGS" ; then
-    HOST_CFLAGS=" "
-fi
-if test -z "$HOST_CXXFLAGS" ; then
-    HOST_CXXFLAGS=" "
-fi
-if test -z "$HOST_LDFLAGS" ; then
-    HOST_LDFLAGS=" "
-fi
+    CFLAGS="-isysroot $ios_sdk_root -arch $ios_arch -miphoneos-version-min=$ios_deploy_version -I$ios_sdk_root/usr/include -pipe -Wno-implicit-int -Wno-return-type"
+    CXXFLAGS="$CFLAGS"
+    CPPFLAGS=""
 
-AC_DEFINE(IPHONEOS)
-CROSS_COMPILE=1
+    dnl prevent cross compile section from using these flags as host flags
+    if test -z "$HOST_CPPFLAGS" ; then
+        HOST_CPPFLAGS=" "
+    fi
+    if test -z "$HOST_CFLAGS" ; then
+        HOST_CFLAGS=" "
+    fi
+    if test -z "$HOST_CXXFLAGS" ; then
+        HOST_CXXFLAGS=" "
+    fi
+    if test -z "$HOST_LDFLAGS" ; then
+        HOST_LDFLAGS=" "
+    fi
 
+    AC_DEFINE(IPHONEOS)
+    CROSS_COMPILE=1
+esac
 ])

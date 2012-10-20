@@ -158,8 +158,7 @@ MOZ_ARG_WITH_STRING(gonk-toolchain-prefix,
 MOZ_ARG_WITH_STRING(ios-target,
 [  --with-ios-target=SDK
                      what target sdk to use, defaults to iPhoneSimulator],
-    ios_target=$withval,
-    ios_target="iPhoneSimulator")
+    ios_target=$withval)
 
 if test -n "$gonkdir" ; then
     kernel_name=`uname -s | tr "[[:upper:]]" "[[:lower:]]"`
